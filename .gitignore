@@ -1,0 +1,23 @@
+# PlatformIO / ESP-IDF
+.pio/
+.vscode/.browse*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+build/
+managed_components/
+dependencies.lock
+sdkconfig.*
+!sdkconfig.defaults
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Phase A raw captures (CSV results ARE committed)
+tools/phase_a/results/iq/
+# Phase A GUI per-machine settings (COM port etc.)
+tools/phase_a/phase_a_gui.json
+phase_a
+tools
