@@ -36,6 +36,8 @@ SOC_RESERVE_MEMORY_REGION(0x40830000, 0x40840000, modem_dump_ring);
 // snapshots 2026-10-16). Recovery: if the FIFO stays full for 100 ms while
 // the host sends SOFs, re-issue WR_DONE; after 200 ms also reset the serial
 // IN async FIFO. With the port closed this only discards output nobody reads.
+// A FIFO that is full but moving (the IN endpoint's pointers change between
+// polls) is a busy stream, not a stuck one, and is left alone.
 #define POLL_MS      20
 #define FLUSH_POLLS  5
 #define RESET_POLLS  10
@@ -55,6 +57,7 @@ static void guard_task(void *arg)
     const bool poll_key = arg != NULL;
     unsigned stuck = 0;
     uint32_t last_frame = REG_READ(USB_SERIAL_JTAG_FRAM_NUM_REG);
+    uint32_t last_ep = REG_READ(USB_SERIAL_JTAG_IN_EP1_ST_REG);
     for (;;) {
         if (poll_key) {
             uint8_t buf[16];
@@ -67,8 +70,11 @@ static void guard_task(void *arg)
         uint32_t frame = REG_READ(USB_SERIAL_JTAG_FRAM_NUM_REG);
         bool host_alive = frame != last_frame;
         last_frame = frame;
+        uint32_t ep = REG_READ(USB_SERIAL_JTAG_IN_EP1_ST_REG);
+        bool moving = ep != last_ep;
+        last_ep = ep;
         bool in_free = REG_READ(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE;
-        stuck = (!in_free && host_alive) ? stuck + 1 : 0;
+        stuck = (!in_free && host_alive && !moving) ? stuck + 1 : 0;
         if (stuck == FLUSH_POLLS) usb_serial_jtag_ll_txfifo_flush();
         if (stuck >= RESET_POLLS) {
             const uint32_t in_reset = USB_SERIAL_JTAG_SERIAL_IN_AFIFO_RESET_WR | USB_SERIAL_JTAG_SERIAL_IN_AFIFO_RESET_RD;

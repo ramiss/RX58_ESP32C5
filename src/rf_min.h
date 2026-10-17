@@ -10,6 +10,10 @@
 // gain forced to `gain`, autonomous MODEM_DIAG writer running.
 esp_err_t rf_min_start(uint8_t gain);
 
+// The same front end without the autonomous MODEM_DIAG writer, for code that
+// triggers its own RF-dump snapshots (src/hop_engine.c).
+esp_err_t rf_min_start_front(uint8_t gain);
+
 // Stop the modem writer and reboot into the ROM download mode. Needed to
 // re-flash: esptool's USB reset does not reset the modem domain.
 void rf_min_reboot_to_download(void);

@@ -98,6 +98,13 @@ static void enable_continuous_modem(void)
 
 esp_err_t rf_min_start(uint8_t gain)
 {
+    esp_err_t err = rf_min_start_front(gain);
+    if (err == ESP_OK) enable_continuous_modem();
+    return err;
+}
+
+esp_err_t rf_min_start_front(uint8_t gain)
+{
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         err = nvs_flash_erase();
@@ -132,7 +139,6 @@ esp_err_t rf_min_start(uint8_t gain)
     wifi_promiscuous_filter_t filter = {.filter_mask = 0};
     (void)esp_wifi_set_promiscuous_filter(&filter);
     if ((err = lock_rx_only()) != ESP_OK) return err;
-    enable_continuous_modem();
     phy_disable_agc();
     phy_rfagc_disable();
     phy_wifi_fbw_sel(1u);   // BW40 analog filter

@@ -18,6 +18,9 @@
 #ifdef SDR_PADTEST
 #include "padtest.h"
 #endif
+#ifdef SDR_HOPBENCH
+#include "hop_bench.h"
+#endif
 
 static const char *TAG = "rx5808";
 
@@ -26,6 +29,10 @@ void app_main(void)
 #ifdef SDR_PADTEST
     // Phase B step 1, built by `.\tools\pio.ps1 run -e padtest`.
     padtest_main();
+#endif
+#ifdef SDR_HOPBENCH
+    // Phase B2 hop engine bench, built by `.\tools\pio.ps1 run -e hop`.
+    hop_bench_main();
 #endif
     // Console key B reboots to the ROM loader (used by every upload).
     dlboot_start_listener();

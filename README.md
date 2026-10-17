@@ -28,7 +28,7 @@ continuously, and outputs that as RSSI.
 | A | Bench-test stock esp-sdr: channel coverage 5645-5945 MHz, gain/overload, snapshot rate | **Done 2026-10-09** (results below; tool: [tools/phase_a](tools/phase_a/README.md)) |
 | B0 | IQ loopback pad test (18-GPIO map on a bare XIAO) | **Done** (2026-10-16): all candidates PASS, zero errors in a 9-min soak; negative control FAILs as it must |
 | B1 | SPI interface datasheet: legacy RX5808 emulation + multi-channel extension | **v0.9 draft done** ([docs/RX5808-C5_SPI_Interface.md](docs/RX5808-C5_SPI_Interface.md)) |
-| B2 | Multi-channel hop engine: up to 8 channels at ~1 kHz each, bench stream over USB | Not started |
+| B2 | Multi-channel hop engine: up to 8 channels at ~1 kHz each, bench stream over USB | **Done 2026-10-17**: 1061 Hz per channel on R1-R8, max gap 1.1 ms (results below; `-e hop`, [tools/phase_b](tools/phase_b/phase_b.py)) |
 | B3 | RX5808-mode RSSI on C5VRX's capture ring -> PWM RSSI pin; tune-to-valid < 35 ms | Not started |
 | C1 | Legacy SPI slave: RX5808 frames at any speed, register read-back | Not started |
 | C2 | Extension: EXT register, mode switch, peak-hold, fast readout | Not started |
@@ -64,6 +64,37 @@ XIAO ESP32-C5, stock esp-sdr (rev e74f2a4), 10-bit captures, **no antenna**
 - Quirks: the C5 delivers a mirrored spectrum (the tool conjugates it); an
   internal spur sits at 5920 MHz (148 x 40 MHz, +3.00 MHz on R8); one sweep
   showed a near-rail DC offset on R6 that the baseline did not repeat.
+
+### Phase B2 results (2026-10-17)
+
+Hop engine (`src/hop_engine.c`, bench firmware `-e hop`), XIAO C5, no
+antenna, VTX on R3, gain 60, 256-sample snapshots, LO 10 MHz below the
+pilot. The retune and trigger sequences come from Espressif's own
+libphy/librftest (see the file header).
+
+- **Rate: 1061 Hz per channel on all of R1-R8, worst gap 1.1 ms** over 60 s
+  (63,655 cycles): no lost frames, CRC errors, failed snapshots or gain
+  re-forces. Per slot 111.6 us: retune 62.6, snapshot 4.7, meter 44.2.
+- **Retune options.** The full libphy sequence minus its 300 us wait takes
+  98 us (815 Hz per channel). Skipping `phy_ckgen_5g_cal` and
+  `phy_freq_mem_change_5g_` gives 62 us with no measurable cost, so that is
+  the default (command `K`).
+- **Settling: none needed.** All 56 ordered R-band pairs (incl. the R8->R1
+  wrap) are within 1 dB of the 2 ms reading from the first 3.2 us window,
+  with and without the skipped steps; the VTX channel's level does not
+  depend on the channel hopped from (repeat runs within 0.2 dB).
+- **Snapshot:** RF-dump at 80 MS/s confirmed (4096 words in 51.4 us), lands
+  at 0x40830000, gain field = the forced index. Spectrum mirrored as in
+  Phase A. **Image rejection ~38 dB**. The VTX's 6.5 MHz audio subcarriers are visible.
+- **Levels:** floor -48 to -43 dBFS (R1/R2 lowest), reading noise 0.8 dB SD;
+  VTX on R3 at -7 to -12 dBFS on the bench, ~35 dB above the floor.
+- **Close VTX, other channels.** Waving the VTX around until R3 clipped
+  (2,620 clipped readings) did not disturb the other slots: 3 readings
+  above floor + 6 dB in ~445,000, none while R3 was clipping; R2/R4 track
+  R3 only weakly (correlation ~0.2). Still to do at race power and gate
+  distance with two VTXs (near/far).
+- Open: the meter (44 us) has room to shrink; a second VTX for the
+  near/far case.
 
 ### Video notes (kept from Phase B on)
 
