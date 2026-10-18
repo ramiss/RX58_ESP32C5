@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // RX5808 3-wire bus slave: DATA D10 (GPIO10), SELECT D8 (GPIO8), CLOCK D1
-// (GPIO0). docs/RX5808-C5_SPI_Interface.md sections 2-5.
+// (GPIO0). docs/RX58_ESP32C5_SPI_Interface.md sections 2-5.
 #pragma once
 
 #include <stdbool.h>
@@ -40,9 +40,8 @@ void bus_set_block_builder(bus_block_builder_t fn);
 // Frames go into the register file from the SPI driver's interrupt; kept
 // as a hook for the radio task (no-op).
 void bus_poll(void);
-// True while a slow (possible read) frame is in progress: the radio task
-// should not mask interrupts then, because read bits must follow CLOCK
-// within 5 us.
+// True while a legacy read's data bits are being sent: the radio task should
+// not mask interrupts then, because each bit must follow CLOCK within 5 us.
 bool bus_slow_frame_active(void);
 void bus_stats(bus_stats_t *out, bool reset);
 // Input glitch filters on (bit set) or off: 1 = SELECT (250 ns flex),

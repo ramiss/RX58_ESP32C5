@@ -1,61 +1,27 @@
-// ESP32_SDR_RX5808 -- drop-in RX5808 replacement on a XIAO ESP32-C5.
+// SPDX-License-Identifier: GPL-3.0-only
+// RX58_ESP32C5 -- drop-in RX5808 replacement on a XIAO ESP32-C5.
 //
-// Base scaffold: proves the toolchain, board, flash mode and USB console.
-// The receiver (continuous I/Q capture -> fixed-gain block power -> RSSI
-// output, plus the RX5808 3-wire SPI slave) is built on top of this.
+// The default build (`.\tools\pio.ps1 run`, env xiao_c5) is the receiver:
+// src/receiver.c behind the RX5808 bus (src/rx5808_bus.c), with a USB
+// console and bench stream (src/rx_bench.c). The other envs are bench
+// firmwares from the development phases: `-e hop` (multi-channel hop
+// engine, src/hop_bench.c) and `-e padtest` (IQ loopback pad test).
 
-#include <inttypes.h>
-#include <stdio.h>
-
-#include "dlboot.h"
-#include "esp_chip_info.h"
-#include "esp_flash.h"
-#include "esp_log.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
-#ifdef SDR_PADTEST
+#if defined(SDR_PADTEST)
 #include "padtest.h"
-#endif
-#ifdef SDR_HOPBENCH
+#elif defined(SDR_HOPBENCH)
 #include "hop_bench.h"
-#endif
-#ifdef SDR_RXBENCH
+#else
 #include "rx_bench.h"
 #endif
 
-static const char *TAG = "rx5808";
-
 void app_main(void)
 {
-#ifdef SDR_PADTEST
-    // Phase B step 1, built by `.\tools\pio.ps1 run -e padtest`.
+#if defined(SDR_PADTEST)
     padtest_main();
-#endif
-#ifdef SDR_HOPBENCH
-    // Phase B2 hop engine bench, built by `.\tools\pio.ps1 run -e hop`.
+#elif defined(SDR_HOPBENCH)
     hop_bench_main();
-#endif
-#ifdef SDR_RXBENCH
-    // Phase B3 RX5808-mode bench, built by `.\tools\pio.ps1 run -e rx`.
+#else
     rx_bench_main();
 #endif
-    // Console key B reboots to the ROM loader (used by every upload).
-    dlboot_start_listener();
-
-    esp_chip_info_t chip;
-    esp_chip_info(&chip);
-
-    uint32_t flash_bytes = 0;
-    esp_flash_get_size(NULL, &flash_bytes);
-
-    ESP_LOGI(TAG, "ESP32_SDR_RX5808 scaffold: %s rev v%d.%d, %d core(s), %" PRIu32 " MB flash",
-             CONFIG_IDF_TARGET, chip.revision / 100, chip.revision % 100, chip.cores,
-             flash_bytes / (1024 * 1024));
-
-    for (;;) {
-        ESP_LOGI(TAG, "alive %" PRId64 " ms", esp_timer_get_time() / 1000);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
 }

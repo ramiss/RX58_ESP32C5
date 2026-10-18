@@ -20,4 +20,9 @@ tools/phase_a/results/iq/
 # Phase A GUI per-machine settings (COM port etc.)
 tools/phase_a/phase_a_gui.json
 phase_a
-tools
+# tools/: only the build wrapper, upload hook and release targets are published
+/tools/*
+!/tools/pio.ps1
+!/tools/pio_upload.py
+!/tools/pio_targets.py
+!/tools/publish_release.py

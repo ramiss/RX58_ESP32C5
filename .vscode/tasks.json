@@ -1,0 +1,45 @@
+{
+  // VS Code tasks for RX58_ESP32C5.  They run PlatformIO through tools/pio.ps1
+  // (the private pioarduino core this repo needs; the PlatformIO sidebar uses
+  // the machine-wide core, which can't build the C5).
+  // Run any task with:  Ctrl+Shift+P  ->  "Tasks: Run Task"
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/pio.ps1", "run"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Upload",
+      "detail": "Build and flash over USB (reset-free: no BOOT button needed on a running receiver).",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/pio.ps1", "run", "-t", "upload"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "Publish Release (tag + push)",
+      "detail": "Tag a stable vMAJOR.MINOR.PATCH and push; CI publishes the GitHub Release the flasher downloads.",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/pio.ps1", "run", "-e", "xiao_c5", "-t", "publish_release"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "focus": true, "clear": true }
+    },
+    {
+      "label": "Publish Pre-release (beta tag + push)",
+      "detail": "Tag vMAJOR.MINOR.PATCH-beta.N and push; CI publishes it flagged Pre-release.",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/tools/pio.ps1", "run", "-e", "xiao_c5", "-t", "publish_prerelease"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared", "focus": true, "clear": true }
+    }
+  ]
+}

@@ -336,10 +336,13 @@ unsigned bus_filters(unsigned mask)
 // spun here forever and took the console with it (2026-10-17).
 #define STALL_US 5000
 
+// Only the data bits of a legacy read are timing-critical (each bit within
+// 5 us of CLOCK falling): the radio pauses snapshots for those (~0.4 ms at
+// RotorHazard timing), not for the ~5 ms address phase, which once cost a
+// 5.8 ms gap in the readings (soak, 2026-10-18).
 bool bus_slow_frame_active(void)
 {
-    const rd_state_t s = s_state;
-    if (s != ST_ADDR && s != ST_READ) return false;
+    if (s_state != ST_READ) return false;
     return esp_cpu_get_cycle_count() - s_t_last < STALL_US * esp_rom_get_cpu_ticks_per_us();
 }
 

@@ -3,4 +3,4 @@ cmake_minimum_required(VERSION 3.22)
 # fails the configure step in a repo with no commits yet.
 set(PROJECT_VER "0.1.0")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp32_sdr_rx5808)
+project(rx58_esp32c5)

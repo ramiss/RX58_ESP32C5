@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // The receiver: RX5808 mode and multi-channel mode on the hop engine's
 // 10-bit snapshots, switched in place over the bus (EXT MODE), with per-slot
-// peak-hold and the fast-readout blocks (docs/RX5808-C5_SPI_Interface.md
+// peak-hold and the fast-readout blocks (docs/RX58_ESP32C5_SPI_Interface.md
 // sections 7-10).
 #pragma once
 

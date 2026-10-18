@@ -1,8 +1,8 @@
-# RX5808-C5 SPI Interface
+# RX58_ESP32C5 SPI Interface
 
 **Datasheet for hosts of the ESP32-C5 RX5808 replacement receiver**
 
-Version 0.9.4 (draft), 2026-10-18. This document is licensed under
+Version 0.9.6 (draft), 2026-10-18. This document is licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): anyone may
 implement this interface in host software under any license, including MIT.
 The receiver firmware itself is GPL-3.0-only and is a separate work.
@@ -34,7 +34,7 @@ The receiver firmware itself is GPL-3.0-only and is a separate work.
 
 ## 1. Overview
 
-The RX5808-C5 is a Seeed XIAO ESP32-C5 running receiver firmware that makes
+The RX58_ESP32C5 is a Seeed XIAO ESP32-C5 running receiver firmware that makes
 it behave like an RX5808 5.8 GHz FPV receiver module. A host that already
 drives an RX5808 over its 3-wire bus and reads its analog RSSI pin works
 without changes.
@@ -138,10 +138,10 @@ DATA   ======A0==A1==A2==A3==RW==D0== ... =D18=D19=============
 
 | | Minimum | Maximum |
 |---|---|---|
-| Write frames | any (the C5 has no timeout) | 4 MHz [TBV] |
+| Write frames | any (the C5 has no timeout) | 4 MHz |
 | Legacy read frames (section 5): address and R/W bits | 40 µs per bit | - |
 | Legacy read frames: data bits | CLOCK low 10 µs, high 5 µs | - |
-| Fast readout frames (section 8) | - | 4 MHz [TBV] |
+| Fast readout frames (section 8) | - | 4 MHz |
 | Time between frames (SELECT high) | 10 µs | - |
 
 Existing hosts range from about 1.1 kbit/s (FPVRaceOne, RotorHazard) to
@@ -205,8 +205,9 @@ R/W    = 1            (write)
 D0..D19= 1 0 1 1 1 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0
 ```
 
-RSSI is valid within **35 ms** of the frame ending (SELECT rising) [TBV];
-hosts already wait at least that long.
+RSSI is valid within **35 ms** of the frame ending (SELECT rising); hosts
+already wait at least that long. (Measured: the first reading after a
+retune is already valid, about 0.35 ms later.)
 
 ### 4.2 Power-down (0x0A)
 
@@ -233,7 +234,7 @@ Legacy hosts write 0x0F to wake from power-down.
 
 ## 5. Register read-back
 
-A real RX5808 does not answer reads. The RX5808-C5 does, using the
+A real RX5808 does not answer reads. The RX58_ESP32C5 does, using the
 RTC6715 read protocol, so hosts can verify tuning (RotorHazard's
 `TEST_RX_REGISTER`) and detect the C5 (section 7.3).
 
@@ -280,14 +281,14 @@ DATA   ==A0==A1==A2==A3==R/W=0==>|-D0------|-D1----- ... -D19-|  (released)
 
 ## 6. Compatibility summary
 
-| RX5808 / RTC6715 function | RX5808-C5 | Notes / alternative |
+| RX5808 / RTC6715 function | RX58_ESP32C5 | Notes / alternative |
 |---|---|---|
 | Tuning via 0x01 | Yes | 5645-5945 MHz verified; 2 MHz step like the RX5808 |
 | R counter 0x00 | Yes | |
 | Power-down 0x0A = 0xFFFFF | Yes | |
 | Reset/wake via 0x0F | Yes | |
 | Analog RSSI pin | Yes | PWM + RC; curve matched to a real module [TBV] |
-| RSSI valid after tune | Yes, within 35 ms [TBV] | |
+| RSSI valid after tune | Yes, within 35 ms | Measured ~0.35 ms |
 | Register read-back | **Yes (better than the original)** | Real modules never answer |
 | Composite video | Yes (video mode, selected with EXT MODE = 2) | 6-bit; image quality below an RX5808 at long range [TBV]. Not in the default RX5808 mode |
 | Video off via PD_VAMP / PD_VCLAMP | Ignored by default | RSSI-only hosts set these bits; honouring them would blank goggle hosts' video |
@@ -316,7 +317,7 @@ a sub-register number and a 16-bit value:
 
 | Sub | Name | Value | Meaning |
 |---|---|---|---|
-| 0x0 | MODE | 0-2 | 0 = RX5808 mode, 1 = multi-channel mode, 2 = video mode. The receiver switches in place, without restarting, keeping every register and slot setting: **RX5808 <-> multi-channel within 10 ms** [TBV]; into or out of video mode up to 2 s [TBV]. During the switch the RSSI pin holds its floor level and INFO reports the switch (9.1); the switch is confirmed when INFO reports the new mode with no switch in progress (7.4). Writing the mode already in use does nothing. **Every power-on starts in RX5808 mode** (7.4). |
+| 0x0 | MODE | 0-2 | 0 = RX5808 mode, 1 = multi-channel mode, 2 = video mode. The receiver switches in place, without restarting, keeping every register and slot setting: **RX5808 <-> multi-channel within 10 ms** (measured under 1 ms); into or out of video mode up to 2 s [TBV]. During the switch the RSSI pin holds its floor level and INFO reports the switch (9.1); the switch is confirmed when INFO reports the new mode with no switch in progress (7.4). Writing the mode already in use does nothing. **Every power-on starts in RX5808 mode** (7.4). |
 | 0x1-0x8 | SLOT1_MHZ ... SLOT8_MHZ | 0 or 5180-5945 | Frequency of slot *n* in MHz (exact, no 2 MHz step); 0 = slot off. Takes effect at the next hop cycle. |
 | 0x9 | RSSI_PIN_SLOT | 1-8 | The slot whose RSSI drives the analog pin in multi-channel mode. Default 1. |
 | 0xA | GAIN | 0, or 1-83 | 0 = firmware default (60). 1-83 forces that receiver gain index. Lower values avoid overload with a quad very close to the receiver. |
@@ -362,7 +363,7 @@ another mode.
 
 Mode switches happen in place, without a restart. RX5808 mode and
 multi-channel mode share the same receiver path, so switching between them
-is quick (within 10 ms [TBV]); video mode uses different hardware and
+is quick (within 10 ms; measured under 1 ms); video mode uses different hardware and
 takes longer (up to 2 s [TBV]). A 0x0F reset write (section 4.3) does not
 change the mode.
 
@@ -373,7 +374,8 @@ change the mode.
    power-on mode).
 3. Confirms the switch: reads INFO (block 0, section 9.1) until byte 6
    reports the requested mode and flags bit 1 (switch in progress) is
-   clear. For multi-channel mode this is expected within 10 ms [TBV];
+   clear. For multi-channel mode this is expected within 10 ms (usually the
+   first INFO read already shows it);
    give up after 2 s and treat the receiver as a plain RX5808.
 4. Writes its mode's settings (slots, RSSI_PIN_SLOT, GAIN) as needed. Slot
    writes may also come before the MODE write; they are kept by the
@@ -533,10 +535,10 @@ they do for an RX5808.
 
 | Event | Time |
 |---|---|
-| Power-on to accepting bus frames | <= 150 ms [TBV]. Frames that arrive while the radio is still starting are kept and applied once it is up. |
+| Power-on to accepting bus frames | <= 150 ms (measured 51 ms). Frames that arrive while the radio is still starting are kept and applied once it is up. |
 | Power-on to valid RSSI | <= 1.5 s [TBV] |
 | Gap between frames (SELECT high) | >= 10 µs |
-| Tune (0x01 write) to valid RSSI | <= 35 ms [TBV] |
+| Tune (0x01 write) to valid RSSI | <= 35 ms (measured ~0.35 ms) |
 | Legacy read: address/R/W bit time | >= 40 µs per bit |
 | Legacy read: data bits, CLOCK low / high | >= 10 µs / >= 5 µs |
 | Legacy read: C5 drives each bit after CLOCK falls | <= 5 µs |
@@ -544,11 +546,12 @@ they do for an RX5808.
 | Fast readout: SELECT low to first clock | >= 20 µs |
 | C5 releases DATA after SELECT rises | <= 5 µs |
 | Host drives DATA after a read frame | >= 10 µs after SELECT rises |
-| MODE switch, RX5808 <-> multi-channel (in place) | <= 10 ms [TBV] |
+| MODE switch, RX5808 <-> multi-channel (in place) | <= 10 ms (measured 0.03-0.8 ms) |
 | MODE switch into or out of video mode (in place) | <= 2 s [TBV] |
-| Multi-channel: readings per slot (8 slots) | about 1000 per second [TBV] |
-| Multi-channel: time between readings of one slot | about 1 ms, at most 2 ms [TBV] |
-| Max bus clock | 4 MHz [TBV] |
+| RX5808 mode: readings per second | about 4,900 |
+| Multi-channel: readings per slot (8 slots) | about 1,050 per second (measured 1,035-1,095) |
+| Multi-channel: time between readings of one slot | about 1 ms, at most 2 ms (measured worst ~1.1 ms) |
+| Max bus clock | 4 MHz (writes and fast readout) |
 
 ---
 
@@ -557,7 +560,7 @@ they do for an RX5808.
 ### 12.1 Detecting the C5
 
 1. Write register 0x0F (reset) and 0x0A, as usual.
-2. Read register 0x0E (section 5). **0xC5xxx** means an RX5808-C5 with
+2. Read register 0x0E (section 5). **0xC5xxx** means an RX58_ESP32C5 with
    protocol version xxx. Anything else means a real RX5808 (or nothing) -
    carry on as before.
 3. Optionally read block 0 (INFO) to learn capabilities and firmware version.
@@ -605,7 +608,7 @@ Use `snap_us` and the sequence number only to detect lost polls.
 - RotorHazard's node firmware writes RX5808 frames and, from node API 36,
   verifies each tune by reading 0x01. The C5 answers, so the check passes.
 - Nodes with 5 V logic (Arduino) need level shifting (2.2).
-- RotorHazard's 8-node shared-bus board can carry up to 8 RX5808-C5
+- RotorHazard's 8-node shared-bus board can carry up to 8 RX58_ESP32C5
   receivers.
 
 ---
@@ -619,6 +622,8 @@ Use `snap_us` and the sequence number only to detect lost polls.
 | 0.9.2 | 2026-10-17 | MODE kept across power cycles (superseded by 0.9.3). |
 | 0.9.3 | 2026-10-17 | Mode switches happen in place, without a restart: RX5808 <-> multi-channel within 10 ms, video up to 2 s. Every power-on starts in RX5808 mode; nothing is kept across power cycles. Hosts request their mode once the C5 is detected and confirm the switch by reading INFO (7.4); after a receiver restart they request it again. Writing the current mode is a no-op. INFO mode byte lists video (2). |
 | 0.9.4 | 2026-10-18 | From the first firmware (Phase C2): blocks are at most 64 bytes (one SPI transfer without DMA), so PEAKS is repacked to 10 + 6n + 2 bytes (60 for 8 slots): valid and clipped flags move into header masks, the per-slot reading count is dropped. The readout frame must be the frame right after its request; a retry re-arms the same snapshot with READ_SELECT = 0x80 + n (no longer "repeated readouts return the same bytes"). All-ones frames are ignored. |
+| 0.9.5 | 2026-10-18 | Measured on the C2 firmware, these are no longer targets: 4 MHz bus clock for writes and fast readout, power-on to bus 51 ms, tune to valid RSSI ~0.35 ms, RX5808 <-> multi-channel switch under 1 ms, ~1,050 readings/s per slot with 8 slots (worst gap ~1.1 ms); RX5808 mode ~4,900 readings/s added. |
+| 0.9.6 | 2026-10-18 | Device renamed from RX5808-C5 to RX58_ESP32C5; no interface change (the identify word stays 0xC5009). Credits updated. |
 
 ---
 
@@ -626,4 +631,5 @@ Use `snap_us` and the sequence number only to detect lost polls.
 (Rev V0.2) and the behaviour of existing hosts (FPVRaceOne, RotorHazard,
 rx5808-pro-diversity, Chorus RF Laptimer). The receiver builds on
 [C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
-contributors.*
+contributors, and on the raw I/Q capture path first published by
+[esp-sdr](https://github.com/ESPARGOS/esp-sdr) (ESPARGOS).*

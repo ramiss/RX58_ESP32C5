@@ -157,7 +157,14 @@ static void apply_changes(void)
         memset(c.mhz, 0, sizeof c.mhz);
         mask = 0x01;
     }
-    if (mask != s_active_mask) reset_slot_state();
+    if (mask != s_active_mask || s_retune) {
+        if (mask != s_active_mask) reset_slot_state();
+        // Restart the readings/s window: one that straddles a mode or slot
+        // change averages two different rates (INFO showed ~880/s per slot
+        // for a receiver doing ~1050).
+        s_rate_count = 0;
+        s_rate_t0 = esp_timer_get_time();
+    }
     s_active_mask = mask;
     s_cfg = c;
     hop_set_config(&s_cfg);
@@ -218,11 +225,10 @@ static bool step_rx5808(rx_result_t *out)
 
 static bool step_multi(rx_result_t *out)
 {
-    // The cycle masks interrupts in short bursts (retune ~60 us, snapshot
-    // ~5 us), which would delay a legacy read's data bits. Start it with the
-    // bus idle. A read that begins mid-cycle can still meet one burst.
-    // TODO(C2): measure legacy reads in multi-channel mode; if a retune burst
-    // lands on a data bit, check bus_slow_frame_active() per slot.
+    // Only snapshots mask interrupts (~5 us each; retunes hold just the
+    // scheduler), so a legacy read's data bits are delayed by at most one
+    // snapshot. Start the cycle with the bus idle anyway. Measured: 20/20
+    // RotorHazard-timed reads during 8-slot hopping (2026-10-18).
     while (bus_slow_frame_active()) {}
     hop_reading_t r[REGS_SLOTS];
     uint8_t mask;

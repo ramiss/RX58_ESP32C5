@@ -424,7 +424,7 @@ void hop_bench_main(void)
     (void)esp_task_wdt_reconfigure(&twdt);
 #endif
 
-    printf("ESP32_SDR_RX5808 hop bench (Phase B2). '?' = config, R = stream, T = timing\n");
+    printf("RX58_ESP32C5 hop bench (Phase B2). '?' = config, R = stream, T = timing\n");
     esp_err_t err = hop_init(&DEFAULT_CFG);
     s_rf_up = err == ESP_OK;
     if (s_rf_up) print_config();

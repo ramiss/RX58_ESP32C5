@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // RX5808 / RTC6715 register file and the EXT register state
-// (docs/RX5808-C5_SPI_Interface.md, sections 4 and 7).
+// (docs/RX58_ESP32C5_SPI_Interface.md, sections 4 and 7).
 #pragma once
 
 #include <stdbool.h>

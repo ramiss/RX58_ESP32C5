@@ -300,7 +300,7 @@ void rx_bench_main(void)
     (void)esp_task_wdt_reconfigure(&twdt);
 #endif
 
-    printf("ESP32_SDR_RX5808 receiver bench (C2). '?' = config, R = stream, T = stats, L = bus\n");
+    printf("RX58_ESP32C5 receiver bench (C2). '?' = config, R = stream, T = stats, L = bus\n");
     // The bus first (datasheet 11: frames accepted within ~150 ms of power-on;
     // hosts tune once at their own boot). Frames that arrive while the radio
     // starts are kept in the register file and applied once it is up.

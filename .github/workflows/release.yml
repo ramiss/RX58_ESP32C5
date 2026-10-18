@@ -1,0 +1,212 @@
+name: Release
+
+# Triggers:
+#   - Push a tag matching v*.*.* (e.g. v0.1.0)        → builds + publishes a release
+#   - workflow_dispatch (manual via the Actions tab)  → builds without publishing,
+#                                                       useful for smoke-testing CI changes
+#
+# How to ship a new firmware version:
+#   1. For a new minor version, bump RX_FW_VERSION in src/receiver.h (the
+#      INFO block reports it to hosts; the tag must match it, see "Check
+#      version").  Patch releases keep it.
+#   2. Commit, push to main.
+#   3. Run the VS Code task "Publish Release (tag + push)", i.e.
+#      .\tools\pio.ps1 run -e xiao_c5 -t publish_release (tools/publish_release.py):
+#      it checks the tree, suggests the version, tags and pushes.
+#   4. Watch the run on GitHub → Actions.  When it finishes the release carries
+#      the merged image, the app image and flash-manifest.json, which the
+#      RX58_ESP32C5 Flasher reads.  (The flasher itself lives in its own repo
+#      and is only rebuilt when the flasher changes.)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required for action-gh-release to create the release
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      # The published build environment: the receiver firmware.  One variable
+      # for both `pio run -e` and the .pio/build/<env>/ output path, so the two
+      # can't drift apart.
+      PIO_ENV: xiao_c5
+      PRODUCT: RX58_ESP32C5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Full history + tags: ESP-IDF sets the app's PROJECT_VER from
+          # `git describe`.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO + pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini', 'sdkconfig.defaults', 'partitions.csv') }}
+
+      - name: Install PlatformIO (pioarduino core)
+        run: |
+          set -x
+          python -m pip install --upgrade pip
+          # The C5 / ESP-IDF 6 platform needs the pioarduino fork of PlatformIO
+          # Core (>= 6.2; tools/pio.ps1 uses the same).  Pinned: bump it
+          # deliberately, after a local build with the new version.
+          pip install "pioarduino==6.2.0"
+          pio --version
+
+      - name: Determine version
+        id: version
+        run: |
+          REF_NAME="${GITHUB_REF_NAME:-manual}"
+          if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            VERSION="${REF_NAME#v}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$REF_NAME"     >> "$GITHUB_OUTPUT"
+          echo "Building $PRODUCT $VERSION (tag=$REF_NAME)"
+
+      - name: Check version
+        run: |
+          # Hosts read the firmware version from the INFO block (RX_FW_VERSION,
+          # major * 256 + minor).  A release whose tag disagrees with it would
+          # report the wrong version, so refuse to publish one.
+          RAW=$(grep -oE '#define[[:space:]]+RX_FW_VERSION[[:space:]]+0x[0-9A-Fa-f]+' src/receiver.h | awk '{print $3}')
+          test -n "$RAW" || { echo "::error::RX_FW_VERSION not found in src/receiver.h"; exit 1; }
+          FW="$(( RAW >> 8 )).$(( RAW & 0xFF ))"
+          echo "RX_FW_VERSION = $RAW ($FW)"
+          REF_NAME="${GITHUB_REF_NAME:-manual}"
+          if [[ "$REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+ ]]; then
+            TAG="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+            if [ "$TAG" != "$FW" ]; then
+              echo "::error::tag $REF_NAME is $TAG but src/receiver.h RX_FW_VERSION is $FW"; exit 1
+            fi
+          fi
+
+      - name: Build firmware
+        run: |
+          set -x
+          # No -t: the default target is the firmware build.  The platform's
+          # post-build step merges bootloader + partition table + app into
+          # firmware.factory.bin (flashed at 0x0).
+          pio run -e "$PIO_ENV"
+          echo "----- contents of .pio/build/$PIO_ENV/ -----"
+          ls -la ".pio/build/$PIO_ENV/"
+          for f in firmware.bin firmware.factory.bin bootloader.bin partitions.bin; do
+            test -s ".pio/build/$PIO_ENV/$f" \
+              || { echo "::error::$f missing or empty after the firmware build"; exit 1; }
+          done
+
+      - name: Stage release assets
+        run: |
+          set -x
+          mkdir -p release-assets
+          BUILD=".pio/build/$PIO_ENV"
+          cp "$BUILD/firmware.factory.bin" "release-assets/$PRODUCT-merged.bin"
+          cp "$BUILD/firmware.bin"         "release-assets/$PRODUCT-firmware.bin"
+
+          # ── Machine-readable flash manifest ──────────────────────────────────
+          # The flasher reads this from the release instead of hardcoding
+          # offsets.  `schema` lets an older flasher refuse a manifest it is too
+          # old to understand.
+          #
+          # Offsets MUST match partitions.csv (factory app at 0x10000).  "full"
+          # writes the merged image: right for a new, bricked or any board,
+          # since the receiver keeps no settings in flash.  The app image is
+          # published for anyone flashing by hand.
+          cat > release-assets/flash-manifest.json <<EOF
+          {
+            "schema": 1,
+            "product": "$PRODUCT",
+            "chip": "esp32c5",
+            "baud": 460800,
+            "version": "${{ steps.version.outputs.version }}",
+            "tag": "${{ steps.version.outputs.tag }}",
+            "layout": {
+              "id":           "c5-factory-300000",
+              "table_offset": "0x8000",
+              "app_offset":   "0x10000",
+              "app_size":     "0x300000"
+            },
+            "assets": {
+              "merged":   { "name": "$PRODUCT-merged.bin",   "offset": "0x0"     },
+              "firmware": { "name": "$PRODUCT-firmware.bin", "offset": "0x10000" }
+            },
+            "flash_modes": {
+              "full": ["merged"]
+            }
+          }
+          EOF
+
+          echo "----- staged assets -----"
+          ls -la release-assets/
+
+          # Hard gate: an app bigger than its partition can't boot.
+          APP_SIZE=$((0x300000))     # factory partition in partitions.csv
+          FW_BYTES=$(stat --printf "%s" "release-assets/$PRODUCT-firmware.bin")
+          if [ "$FW_BYTES" -gt "$APP_SIZE" ]; then
+            echo "::error::firmware.bin is $FW_BYTES bytes, exceeds the $APP_SIZE byte app partition"; exit 1
+          fi
+          echo "size gate OK: fw $FW_BYTES/$APP_SIZE"
+          cat release-assets/flash-manifest.json
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "===== build dir tree ====="
+          find .pio/build -maxdepth 4 -type f -printf '%p (%s bytes)\n' 2>/dev/null | sort
+          echo ""
+          echo "===== platformio.ini ====="
+          cat platformio.ini
+
+      - name: Upload build artifacts (always, for inspection)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RX58_ESP32C5-${{ steps.version.outputs.version }}
+          path: release-assets/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # `body` renders ABOVE the auto-generated notes.  It links to the
+          # flasher's stable "latest" download, which lives in the flasher
+          # repo, so firmware releases never carry the .exe themselves.
+          body: |
+            ## 🛠️ Flash your XIAO ESP32-C5
+
+            Download the
+            **[RX58_ESP32C5 Flasher (Windows)](https://github.com/ramiss/RX58_ESP32C5-Flasher/releases/latest/download/RX58_ESP32C5-Flasher.exe)**
+            — a portable app that flashes any release straight from GitHub.
+            Other platforms: flash `RX58_ESP32C5-merged.bin` at `0x0` with
+            esptool (see the README, "Flashing").
+
+            ---
+          # Tags with a `-` after the version triple (e.g. v0.2.0-beta.1) are
+          # GitHub pre-releases, excluded from /releases/latest.
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          files: |
+            release-assets/RX58_ESP32C5-merged.bin
+            release-assets/RX58_ESP32C5-firmware.bin
+            release-assets/flash-manifest.json
