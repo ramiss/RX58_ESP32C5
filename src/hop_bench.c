@@ -38,6 +38,7 @@
 
 #include "hop_bench.h"
 #include "hop_engine.h"
+#include "bench_link.h"
 #include "dlboot.h"
 #include "rf_min.h"
 
@@ -55,7 +56,6 @@
 #include "freertos/task.h"
 
 #define REG32(a)        (*(volatile uint32_t *)(uintptr_t)(a))
-#define FRAME_SYNC      0xA5
 #define RAW_CHUNK_WORDS 60
 #define SETTLE_WORDS    HOP_RAW_MAX
 #define SETTLE_WIN      256
@@ -77,41 +77,13 @@ static const hop_config_t DEFAULT_CFG = {
 static bool s_rf_up;
 static bool s_streaming;
 static uint16_t s_seq;
-static uint32_t s_dropped;
-static bool s_drop_flag;
 static char s_line[128];
 static unsigned s_line_len;
 
-static uint8_t crc8(const uint8_t *p, unsigned n)
-{
-    uint8_t c = 0;
-    while (n--) {
-        c ^= *p++;
-        for (int b = 0; b < 8; ++b) c = (c & 0x80) ? (uint8_t)((c << 1) ^ 0x07) : (uint8_t)(c << 1);
-    }
-    return c;
-}
-
-// wait_ticks 0: drop the frame if the TX buffer is full (stream); otherwise
-// block up to wait_ticks (raw captures, which must arrive complete).
-static bool send_frame(uint8_t type, const void *payload, uint8_t len, TickType_t wait_ticks)
-{
-    uint8_t buf[3 + 255 + 1];
-    buf[0] = FRAME_SYNC;
-    buf[1] = type;
-    buf[2] = len;
-    memcpy(&buf[3], payload, len);
-    buf[3 + len] = crc8(&buf[1], len + 2u);
-    if (usb_serial_jtag_write_bytes(buf, len + 4u, wait_ticks) == 0) {
-        s_dropped++;
-        s_drop_flag = true;
-        return false;
-    }
-    return true;
-}
-
-static void put16(uint8_t **p, uint32_t v) { (*p)[0] = (uint8_t)v; (*p)[1] = (uint8_t)(v >> 8); *p += 2; }
-static void put32(uint8_t **p, uint32_t v) { put16(p, v); put16(p, v >> 16); }
+// Stream frames drop when the USB buffer is full; raw captures block.
+#define send_frame bench_send_frame
+#define put16      bench_put16
+#define put32      bench_put32
 
 // u16 in 0.1 us, saturating.
 static uint32_t tenth_us(uint64_t cycles, uint32_t tpu)
@@ -127,7 +99,7 @@ static void send_stats(void)
     const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
     uint8_t buf[16 + 5 * 6], *p = buf;
     put32(&p, st.cycles);
-    put32(&p, s_dropped);
+    put32(&p, bench_dropped());
     put32(&p, st.timeouts);
     put32(&p, st.gain_rewrites);
     const hop_stat_t *v[5] = {&st.tune, &st.capture, &st.meter, &st.slot, &st.cycle};
@@ -146,7 +118,7 @@ static void print_stats(void)
     const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
     printf("OK stats cycles=%lu fail=%lu gain_reforce=%lu dropped=%lu (us min/avg/max)\n",
            (unsigned long)st.cycles, (unsigned long)st.timeouts, (unsigned long)st.gain_rewrites,
-           (unsigned long)s_dropped);
+           (unsigned long)bench_dropped());
     const char *names[5] = {"tune", "capture", "meter", "slot", "cycle"};
     const hop_stat_t *v[5] = {&st.tune, &st.capture, &st.meter, &st.slot, &st.cycle};
     for (int i = 0; i < 5; ++i) {
@@ -172,13 +144,12 @@ static void send_measurement(const hop_reading_t *r, unsigned n, uint8_t mask, u
     put16(&p, s_seq++);
     put32(&p, t0);
     *p++ = mask;
-    *p++ = (uint8_t)((reforced ? 1 : 0) | (failed ? 2 : 0) | (s_drop_flag ? 4 : 0));
+    *p++ = (uint8_t)((reforced ? 1 : 0) | (failed ? 2 : 0) | (bench_take_drop_flag() ? 4 : 0));
     for (unsigned i = 0; i < n; ++i) {
         put16(&p, r[i].rssi);
         put16(&p, r[i].t_us);
         *p++ = r[i].clip;
     }
-    s_drop_flag = false;
     send_frame('M', buf, (uint8_t)(p - buf), 0);
 }
 
@@ -257,6 +228,75 @@ static void settle_curve(uint32_t f1, uint32_t f2, uint32_t reps, uint32_t delay
     printf("\n");
 }
 
+// Phase B3 question: while the continuous MODEM_DIAG writer runs (as video
+// needs), can the CPU read its 10-bit ring in the dump bank, and which
+// register tracks the write position? Prints the dump-engine registers that
+// move, whether the bank changes under the CPU, and a pointer trace.
+// Answer (2026-10-17): DUMP_PTR_MODE bits 0-13 are the write position (a
+// 16384-word ring at 80 MS/s), but with the continuous setup's owner field
+// (0) nothing lands in the bank, and with owner 2 a CPU read of the bank is
+// a load access fault (panic, USB dead until replug). So RX5808-mode RSSI
+// cannot read the writer's 10-bit ring; only owner 0 is allowed here.
+#define PROBE_REGS 64
+static void writer_probe(uint32_t lo, uint32_t owner)
+{
+    static uint32_t r1[PROBE_REGS], r2[PROBE_REGS], trace_v[8][32], trace_t[32];
+    volatile uint32_t *ram = hop_dump_ram();
+    const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
+    s_streaming = false;
+    hop_tune(lo);
+    for (uint32_t i = 0; i < HOP_RAW_MAX; ++i) ram[i] = 0xffffffffu;
+    rf_min_writer_start();
+    // Bank owner field (bits 8-11): the continuous setup leaves 0; one-shot
+    // snapshots use 2.
+    REG32(0x60095004u) = (REG32(0x60095004u) & ~0x00000f00u) | ((owner & 0xfu) << 8);
+    esp_rom_delay_us(2000);
+    const uint32_t sram_usage = REG32(0x60095004u);
+
+    for (int k = 0; k < PROBE_REGS; ++k) r1[k] = REG32(0x600a9000u + 4u * k);
+    esp_rom_delay_us(13);
+    for (int k = 0; k < PROBE_REGS; ++k) r2[k] = REG32(0x600a9000u + 4u * k);
+    int moving[8], nm = 0;
+    for (int k = 0; k < PROBE_REGS && nm < 8; ++k)
+        if (r1[k] != r2[k]) moving[nm++] = k;
+    for (int t = 0; t < 32; ++t) {
+        trace_t[t] = esp_cpu_get_cycle_count();
+        for (int m = 0; m < nm; ++m) trace_v[m][t] = REG32(0x600a9000u + 4u * moving[m]);
+        esp_rom_delay_us(3);
+    }
+
+    // The bank under the CPU: sentinels left, real-looking words, changes.
+    uint32_t sentinel = 0, gain_ok = 0, changed = 0;
+    const uint32_t gain = hop_config()->gain;
+    static uint32_t snap[1024];
+    for (uint32_t i = 0; i < 1024; ++i) snap[i] = ram[i * 16];
+    esp_rom_delay_us(50);
+    for (uint32_t i = 0; i < HOP_RAW_MAX; ++i) {
+        uint32_t w = ram[i];
+        sentinel += w == 0xffffffffu;
+        gain_ok += ((w >> 20) & 0x7f) == gain;
+    }
+    for (uint32_t i = 0; i < 1024; ++i) changed += ram[i * 16] != snap[i];
+    const uint32_t ram_word0 = ram[0], ram_word_mid = ram[8000];
+    rf_min_writer_stop();
+    hop_capture_setup();
+
+    printf("OK probe lo=%lu HP_SRAM_USAGE=0x%08lx bank: sentinels %lu/%u, gain==%lu %lu, "
+           "changed in 50us %lu/1024, w[0]=0x%08lx w[8000]=0x%08lx\n",
+           (unsigned long)lo, (unsigned long)sram_usage, (unsigned long)sentinel, HOP_RAW_MAX,
+           (unsigned long)gain, (unsigned long)gain_ok, (unsigned long)changed,
+           (unsigned long)ram_word0, (unsigned long)ram_word_mid);
+    for (int m = 0; m < nm; ++m) {
+        printf("  reg 0x%08lx moves: 0x%08lx -> 0x%08lx; trace (us, value):",
+               (unsigned long)(0x600a9000u + 4u * moving[m]), (unsigned long)r1[moving[m]],
+               (unsigned long)r2[moving[m]]);
+        for (int t = 0; t < 32; t += 4)
+            printf(" %.1f:0x%lx", (double)(trace_t[t] - trace_t[0]) / tpu, (unsigned long)trace_v[m][t]);
+        printf("\n");
+    }
+    if (!nm) printf("  no register in 0x600a9000-0x600a90fc moved\n");
+}
+
 static void handle_line(char *line)
 {
     char *p = line;
@@ -307,6 +347,11 @@ static void handle_line(char *line)
         if (!s_rf_up) { printf("ERR radio not running\n"); return; }
         if (na < 3 || a[2] < 1) { printf("ERR P f1 f2 reps [delay_us]\n"); return; }
         settle_curve((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2], na > 3 ? (uint32_t)a[3] : 0u);
+        return;
+    case 'Q':
+        if (!s_rf_up) { printf("ERR radio not running\n"); return; }
+        if (na > 1 && a[1] != 0) { printf("ERR owner != 0 faults the CPU (see writer_probe)\n"); return; }
+        writer_probe(na > 0 ? (uint32_t)a[0] : hop_lo_mhz(5732), 0u);
         return;
     default: printf("ERR unknown command '%c'\n", cmd); return;
     }

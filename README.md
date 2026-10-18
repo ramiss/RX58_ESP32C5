@@ -29,14 +29,22 @@ continuously, and outputs that as RSSI.
 | B0 | IQ loopback pad test (18-GPIO map on a bare XIAO) | **Done** (2026-10-16): all candidates PASS, zero errors in a 9-min soak; negative control FAILs as it must |
 | B1 | SPI interface datasheet: legacy RX5808 emulation + multi-channel extension | **v0.9 draft done** ([docs/RX5808-C5_SPI_Interface.md](docs/RX5808-C5_SPI_Interface.md)) |
 | B2 | Multi-channel hop engine: up to 8 channels at ~1 kHz each, bench stream over USB | **Done 2026-10-17**: 1061 Hz per channel on R1-R8, max gap 1.1 ms (results below; `-e hop`, [tools/phase_b](tools/phase_b/phase_b.py)) |
-| B3 | RX5808-mode RSSI on C5VRX's capture ring -> PWM RSSI pin; tune-to-valid < 35 ms | Not started |
-| C1 | Legacy SPI slave: RX5808 frames at any speed, register read-back | Not started |
-| C2 | Extension: EXT register, mode switch, peak-hold, fast readout | Not started |
-| D | Video in RX5808 mode (C5VRX CVBS path) with RSSI unaffected; video and RSSI under real conditions | Not started |
+| B3 | RX5808-mode RSSI -> PWM RSSI pin; tune-to-valid < 35 ms | **Done 2026-10-17 (mode without video)**: 10-bit snapshots, 4360 readings/s, max gap 0.5 ms, tune-to-valid 0.35 ms (results below; `-e rx`). PWM ripple: needs the RC filter on the bench. Video mode's RSSI moves to D |
+| C1 | Legacy SPI slave: RX5808 frames at any speed, register read-back | **Done 2026-10-18**: bench tests 18/18 (three runs; results below; test host `tools/spi_host`), RSSI RC filter checked, and an unmodified FPVRaceOne (XIAO C6) tunes the C5, tracks its RSSI and times laps |
+| C2 | Extension: EXT register, mode switch, peak-hold, fast readout | **Bench tests pass 2026-10-18** (`spi_host.py c2` 22/22, C1 suite 18/18 on the same firmware; results below). Open: readout at 4 MHz, legacy reads during multi-channel mode |
+| D | Video mode (C5VRX CVBS path) with gain-ranged 4-bit RSSI; video and RSSI under real conditions | Not started |
 
-Two modes: **RX5808 mode** (default; one channel, continuous RSSI + video)
-and **multi-channel mode** (up to 8 channels hopped at ~1 kHz each, no
-video; the host reads per-channel peak RSSI over the same 3 wires).
+Modes: **RX5808 mode** (default; one channel, continuous RSSI from 10-bit
+snapshots, no video), **video mode** (one channel, CVBS out, RSSI from the
+video path's 4-bit samples with gain ranging; Phase D) and **multi-channel
+mode** (up to 8 channels hopped at ~1 kHz each, no video; the host reads
+per-channel peak RSSI over the same 3 wires). Video and full-range RSSI
+can't share the radio's capture engine (Phase B3 results), hence separate
+modes (decided 2026-10-17). One firmware image: every power-on starts in
+RX5808 mode; extension-aware hosts request their mode over the bus (EXT
+MODE) once they have found the receiver and confirm it by reading INFO.
+Switches happen in place, no restart: RX5808 <-> multi-channel share the
+snapshot engine (within ~10 ms), video up to 2 s (datasheet 7.4).
 
 ### Phase A results (2026-10-09)
 
@@ -96,6 +104,123 @@ libphy/librftest (see the file header).
 - Open: the meter (44 us) has room to shrink; a second VTX for the
   near/far case.
 
+### Phase B3 results (2026-10-17)
+
+RX5808 mode, bench firmware `-e rx` (`src/rx_bench.c`), VTX on R3, gain 60,
+no antenna.
+
+- **Why not the video path.** Three routes to RSSI alongside video were
+  tested:
+  - *The writer's 10-bit ring.* The continuous MODEM_DIAG writer's
+    position is in `DUMP_PTR_MODE` bits 0-13 (a 16384-word ring at
+    80 MS/s), but with its bank-owner setting nothing reaches the dump
+    bank, and with the snapshot setting (owner 2) a CPU read of the bank
+    is a load access fault (panic, USB dead until replug).
+  - *The 4-bit video lanes* (`src/capture_ring.c`, C5VRX's PARLIO RX
+    ring on our pad map) work, but at a fixed gain one 4-bit step is
+    already ~-30 dBFS, above the noise floor (~-43): empty channel to VTX
+    was 15.5 dB (ultrafine, folding at the VTX), 14.7 (fine), 8.6
+    (coarse).
+  - So RX5808 mode uses the B2 snapshots, without video.
+- **Readings: 4360/s, worst gap 0.5 ms**, each the mean of 4 snapshots of
+  256 samples (~200 us of CPU per reading, no retune on a fixed channel).
+  Noise 0.39 dB SD per reading on an empty channel, 0.08 dB on the VTX.
+- **Range: 28-33 dB** from empty channels (-43 to -48 dBFS) to the VTX
+  on the bench (-15 dBFS); no clipping, no failed snapshots.
+- **Tune-to-valid: 0.35 ms** (target < 35 ms): the first reading after a
+  retune is already at the new level, 80 of 80 retunes (R3<->R7, R3<->R8).
+- **PWM** (`src/rssi_out.c`): LEDC 10-bit at 78 kHz on D0, linear in dB
+  between two set points (default -60..0 dBFS); follows every reading.
+  Ripple and the dB -> volt curve still need the RC filter and a real
+  RX5808 to compare against (Phase C).
+- Lesson: polling the USB driver (and the GDMA registers) in a tight loop
+  left the USB dead with no panic; bench loops poll the console once per ms.
+
+### Phase C1 results (2026-10-17)
+
+RX5808 bus slave (`src/rx5808_bus.c`, `src/regs.c`) in the RX5808-mode
+firmware (`-e rx`), driven by a XIAO ESP32-C6 test host (`tools/spi_host`:
+firmware + `spi_host.py test`) on 10-15 cm jumpers: C6 D10/D1/D8 -> C5
+D10/D8/D1 (DATA/SELECT/CLOCK), GND. 18/18 checks pass, three runs in a row:
+
+- **Writes at every host speed:** FPVRaceOne's exact timing (300 us per
+  phase, 1.1 kbit/s), 250 kHz (ESP32 scanners), and 32-clock frames at
+  0.25, 1 and 4 MHz with DATA changing on CLOCK falling (hardware-SPI
+  hosts such as the AVR scanner). Frames of 25-32 clocks all decode.
+- **Back-to-back frames (C1-0): 10/10 with SELECT high only 3 us and 1.5
+  us between frames** (the FPV Scanner ESP32 case). Needed: decoding each
+  frame in the SPI slave driver's interrupt callback and re-queueing its
+  transaction there (re-queueing from a task lost the 9th and 10th).
+- **Register read-back, RotorHazard style** (900 us address bits, DATA
+  released 300 us after R/W, 10 us phases): 0x01 reads back as written;
+  0x0E returns the identify word 0xC5009.
+- **Tuning:** a 0x01 write retunes the receiver (5732 MHz -> 5731, the
+  RX5808 2 MHz step); RSSI follows (-24 dBFS on the VTX, -45 dBFS 148 MHz
+  away).
+- **Power:** 0xF2FFF (Chorus RF Laptimer) keeps it on, 0xFFFFF powers down
+  (RSSI pin 0), a 0x0F write wakes it and restores the defaults.
+- **Shared bus:** a frame clocked with SELECT high is ignored.
+- **Boot:** the bus is up 51 ms after power-on (target <= 150 ms), before
+  the radio; the receiver starts on 5865 MHz like an RX5808.
+- **RSSI pin through the RC filter** (2.2k/1k + 220 nF, then 1k + 100 nF;
+  `spi_host.py rc`): level within 4 mV of the design at every duty
+  (0-1.03 V), settled within 50 ms; residual spread is the C6 ADC's own
+  noise (~24 counts SD, rare outliers), not ripple.
+- **Unmodified FPVRaceOne end-to-end** (2026-10-18): FPVRaceOne on the XIAO
+  C6, same wiring plus the filtered RSSI into its D2/A2. It tunes the C5,
+  its calibration graph shows floor ~20-40, VTX ~100-107 and hand-over-
+  antenna dips to ~45-50, and laps register.
+- Lessons:
+  - **Hardware-SPI hosts glitch SELECT.** On bench wiring, DATA and CLOCK
+    edges at the same instant made SELECT glitch at the C5 (one frame
+    arrived as nine 1-4 bit fragments). Fixed with the C5's 2-cycle pin
+    glitch filters on all three lines. A 250 ns flex filter on SELECT
+    also worked, but its state went bad during operation.
+  - **Enable the filters after the radio starts:** filters created
+    before Wi-Fi starts blocked the pins.
+  - **The stalled-frame wait is bounded:** a frame stuck with SELECT low
+    (e.g. an open SELECT wire) once stalled the radio task and the
+    console; now the wait gives up after 5 ms without a clock edge.
+- Test-host notes: the C6's SPI peripheral did not drive these pins and
+  plain GPIO writes top out at ~0.8 MHz, so fast frames use dedicated GPIO.
+  esptool has no watchdog reset for the C6, so `tools/pio_upload.py` arms
+  its LP watchdog by hand (BOOT-free re-flashing, as on the C5).
+
+### Phase C2 results (2026-10-18)
+
+The receiver (`src/receiver.c`, bus `src/rx5808_bus.c`, registers
+`src/regs.c`; firmware `-e rx`) with the extension of datasheet v0.9.4,
+tested from the XIAO C6 host (`python tools\spi_host\spi_host.py c2`), VTX
+on R3. 22/22 checks; the C1 legacy suite still passes 18/18.
+
+- **One firmware, both modes on the snapshot engine.** Power-on is RX5808
+  mode (4,900 readings/s); EXT MODE = 1 switches to multi-channel mode in
+  place: **applied in 29-770 us** (target <= 10 ms), confirmed by the host
+  with one INFO readout. Writing the current mode is a no-op.
+- **Multi-channel: 1035-1095 readings/s per slot** with 8 slots (~0.9 ms
+  per cycle, worst gap ~1 ms). The VTX slot's peak stands ~30 dB above the
+  other seven (-11.8 vs -41..-47 dBFS).
+- **Fast readout** (C5 SPI slave driving DATA during the readout frame):
+  INFO 16 bytes in 0.55 ms and PEAKS for 8 slots (60 bytes) in 2 ms at
+  250 kHz, 20/20 INFO readouts at ~0.8 MHz (the C6's plain-GPIO limit),
+  CRC-16 good on every block; REGS matches the legacy reads; re-arm returns
+  the same snapshot; an unknown block reads 0xFF.
+- **Peak-hold:** per slot, first reading equal to the peak, `age_us`
+  inside the interval; the sequence number counts snapshots.
+- **EXT settings:** slots, RSSI-pin slot (a legacy 0x01 write in
+  multi-channel mode moves it), GAIN (INFO shows 40, back to 60 on 0),
+  OPTIONS (median-of-3 smoothing).
+- Lessons:
+  - **Keep interrupts on during a retune.** `hop_tune` masked them for
+    ~60 us; in multi-channel mode that delayed the SPI interrupt past the
+    host's 50 us request-to-readout gap. The readout then came back empty,
+    and its all-ones bits arrived as a "0x0F reset" write. Now only the
+    scheduler is held during a retune, and all-ones frames are ignored.
+  - **A block must fit 64 bytes,** the SPI slave's limit without DMA. That
+    forced the PEAKS repack (datasheet 0.9.4).
+  - **The readout frame must follow its request directly:** at SELECT fall
+    the slave can't tell a readout frame from a write.
+
 ### Video notes (kept from Phase B on)
 
 C5VRX already demonstrates composite video from a XIAO C5. MODEM_DIAG I/Q
@@ -106,10 +231,12 @@ PARLIO TX clocks it out to a 6-bit binary-weighted resistor ladder
 the RSSI can be computed by the CPU from the same ring. Keeping video sets
 these constraints:
 
-- **One capture for both.** The video demodulator needs Q4/I4 (the top 4
-  bits of the 10-bit I and Q) and PARLIO RX has at most 8 lanes, so the
-  RSSI must use the same 4-bit samples: roughly 20-30 dB of instantaneous
-  range, extended by C5VRX's exact +6/+12 dB lane remaps.
+- **One capture for both (video mode only).** The video demodulator needs
+  Q4/I4 (the top 4 bits of the 10-bit I and Q) and PARLIO RX has at most 8
+  lanes, so in video mode the RSSI must use the same 4-bit samples. Measured
+  at a fixed gain: only ~15 dB from empty channel to VTX (Phase B3
+  results), so video mode needs gain ranging. RX5808 mode without video
+  uses 10-bit snapshots instead.
 - **Gain conflict.** RSSI wants a fixed gain; video wants gain that tracks
   the signal. Plan: let gain move and report RSSI = measured power - current
   gain (dB) from a measured gain table. Phase A supports this: the noise
@@ -206,6 +333,8 @@ platformio.ini, CMakeLists.txt, sdkconfig.defaults   ESP-IDF project (XIAO C5)
 src/                                                 firmware
 tools/pio.ps1                                        PlatformIO wrapper (private toolchain)
 tools/phase_a/                                       stock esp-sdr bench test (Python)
+tools/phase_b/                                       hop engine / RX5808-mode bench tool (Python)
+tools/spi_host/                                      RX5808 bus test host: XIAO C6 firmware + spi_host.py
 docs/                                                design notes, session hand-offs
 ```
 
@@ -349,13 +478,23 @@ over wires, so MIT-licensed hosts such as FPVRaceOne are unaffected.
 
 ### Credits
 
-This project adapts the ESP32-C5 receive-only RF bring-up and continuous
-MODEM_DIAG I/Q capture (`src/rf_min.c`, radio settings in
-`sdkconfig.defaults`; from `main/rf.c` and `sdkconfig.defaults` at commit
-`14e190d`), and plans to build on the live CVBS video path, from
-[C5VRX](https://github.com/Twotoz/C5VRX) by Twotoz and the C5VRX
-contributors. Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)
+This project adapts, from [C5VRX](https://github.com/Twotoz/C5VRX) by
+Twotoz and the C5VRX contributors (all at commit `14e190d`):
+- the ESP32-C5 receive-only RF bring-up and continuous MODEM_DIAG writer
+  (`src/rf_min.c`, radio settings in `sdkconfig.defaults`; from
+  `main/rf.c` and `sdkconfig.defaults`);
+- the MODEM_DIAG -> GPIO loopback lane routing with its coarse / fine /
+  ultrafine lane tables, and the PARLIO RX endless GDMA ring with the
+  newest-descriptor access (`src/capture_ring.c`; from `main/rf.c`
+  `route_modem_iq` and the RX half of `main/transport.c`). Changed: our
+  pad map, RX only (no BitScrambler/TX yet), our own power metrics;
+- and plans to build on its live CVBS video path.
+
+Visit the [official C5VRX website](https://twotoz.github.io/C5VRX/)
 for the original project and its Discord invite. See the source and license
 notices for the applicable terms; this derivative is not an official C5VRX
 release. Phase A uses the stock firmware of
 [esp-sdr](https://github.com/ESPARGOS/esp-sdr) by ESPARGOS.
+
+The multi-channel hop engine (`src/hop_engine.c`) takes its PLL retune and
+RF-dump trigger sequences from Espressif's own ESP-IDF libraries.

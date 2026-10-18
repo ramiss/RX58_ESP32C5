@@ -146,6 +146,19 @@ esp_err_t rf_min_start_front(uint8_t gain)
     return ESP_OK;
 }
 
+void rf_min_writer_start(void)
+{
+    enable_continuous_modem();
+}
+
+void rf_min_writer_stop(void)
+{
+    REG32(DUMP_CTRL) &= ~CTRL_ENABLE;
+    __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+    REG32(HP_SRAM_USAGE) &= ~0x00010f00u;
+    __asm__ __volatile__("fence iorw, iorw" ::: "memory");
+}
+
 void rf_min_reboot_to_download(void)
 {
     // Stop the dump writer first: left running, it keeps writing SRAM into

@@ -25,8 +25,11 @@
 // (C5VRX hardware finding; 0x40840000 is untouched). Keep the heap out of
 // that bank in every firmware, not only those that start the writer. This
 // file is linked by every firmware (the B handler), so the reservation
-// lives here.
+// lives here. (tools/spi_host builds this file for the C6 test host, which
+// has no dump writer.)
+#if CONFIG_IDF_TARGET_ESP32C5
 SOC_RESERVE_MEMORY_REGION(0x40830000, 0x40840000, modem_dump_ring);
+#endif
 
 // Stuck console output: after the watchdog reset that starts new firmware,
 // the XIAO re-enumerates. If the app starts while the host still holds the

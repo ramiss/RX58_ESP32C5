@@ -32,6 +32,7 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define REG32(a)         (*(volatile uint32_t *)(uintptr_t)(a))
 #define FENCE()          __asm__ __volatile__("fence iorw, iorw" ::: "memory")
@@ -110,7 +111,7 @@ static void build_meter(void)
     }
 }
 
-static void capture_setup(void)
+void hop_capture_setup(void)
 {
     REG32(DUMP_CTRL) &= ~CTRL_ENABLE;
     FENCE();
@@ -136,7 +137,7 @@ esp_err_t hop_init(const hop_config_t *cfg)
     hop_set_config(cfg);
     esp_err_t err = rf_min_start_front(s_cfg.gain);
     if (err != ESP_OK) return err;
-    capture_setup();
+    hop_capture_setup();
     return ESP_OK;
 }
 
@@ -158,13 +159,18 @@ uint32_t hop_lo_mhz(uint16_t pilot_mhz)
 
 // phy_set_rfpll_freq without its trailing ets_delay_us(300), then the two
 // 5 GHz steps of phy_set_rf_freq_offset unless skipped.
+// Only the scheduler is held (no other task may touch the PHY's I2C
+// mid-sequence); interrupts stay on. Masking them for this ~60 us delayed
+// the RX5808 bus's SPI interrupt past a host's 50 us request-to-readout
+// gap, so readouts came back empty and the next frame was lost
+// (2026-10-18).
 void hop_tune(uint32_t lo_mhz)
 {
     uint8_t sdm[4];
     int16_t corr;
     uint16_t m = (uint16_t)lo_mhz;
     memcpy(&corr, &phy_param[PP_FREQ_CORR], sizeof corr);
-    portENTER_CRITICAL(&s_mux);
+    vTaskSuspendAll();
     memcpy(&phy_param[PP_PLL_MHZ], &m, sizeof m);
     phy_rfpll_set_freq(lo_mhz, phy_param[PP_XTAL_SEL], corr, sdm);
     phy_write_rfpll_sdm(sdm);
@@ -173,7 +179,7 @@ void hop_tune(uint32_t lo_mhz)
     phy_i2c_sdm_en(phy_param[PP_IS_5G]);
     if (phy_param[PP_IS_5G] && !(s_cfg.skip & HOP_SKIP_CKGEN)) phy_ckgen_5g_cal(lo_mhz);
     if (lo_mhz > 2482 && !(s_cfg.skip & HOP_SKIP_FREQMEM)) phy_freq_mem_change_5g_(sdm);
-    portEXIT_CRITICAL(&s_mux);
+    (void)xTaskResumeAll();
 }
 
 bool hop_capture(uint32_t n, uint32_t *cycles)

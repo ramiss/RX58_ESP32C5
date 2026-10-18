@@ -55,6 +55,10 @@ const hop_config_t *hop_config(void);
 // start (esp_timer, low 32 bits).
 unsigned hop_cycle(hop_reading_t out[HOP_MAX_SLOTS], uint8_t *mask, uint32_t *t0_us);
 
+// (Re)program the RF-dump engine for software-triggered snapshots, e.g.
+// after the continuous writer ran.
+void hop_capture_setup(void);
+
 // Primitives for bench tests.
 uint32_t hop_lo_mhz(uint16_t pilot_mhz);
 void hop_tune(uint32_t lo_mhz);

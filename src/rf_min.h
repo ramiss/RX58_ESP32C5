@@ -14,6 +14,11 @@ esp_err_t rf_min_start(uint8_t gain);
 // triggers its own RF-dump snapshots (src/hop_engine.c).
 esp_err_t rf_min_start_front(uint8_t gain);
 
+// Start / stop only the autonomous MODEM_DIAG writer (after
+// rf_min_start_front). Stopping also returns the dump bank to the CPU.
+void rf_min_writer_start(void);
+void rf_min_writer_stop(void);
+
 // Stop the modem writer and reboot into the ROM download mode. Needed to
 // re-flash: esptool's USB reset does not reset the modem domain.
 void rf_min_reboot_to_download(void);

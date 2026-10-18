@@ -2,7 +2,7 @@
 
 **Datasheet for hosts of the ESP32-C5 RX5808 replacement receiver**
 
-Version 0.9 (draft), 2026-10-16. This document is licensed under
+Version 0.9.4 (draft), 2026-10-18. This document is licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): anyone may
 implement this interface in host software under any license, including MIT.
 The receiver firmware itself is GPL-3.0-only and is a separate work.
@@ -39,12 +39,22 @@ it behave like an RX5808 5.8 GHz FPV receiver module. A host that already
 drives an RX5808 over its 3-wire bus and reads its analog RSSI pin works
 without changes.
 
-The receiver has two modes:
+The receiver has three modes:
 
 | Mode | What it does | RSSI pin | Video pin |
 |---|---|---|---|
-| **RX5808 mode** (default) | Receives one channel continuously, like an RX5808 | That channel | Composite video (CVBS) |
+| **RX5808 mode** (default) | Receives one channel continuously, like an RX5808, with full-range RSSI (thousands of readings per second) | That channel | Blanked |
+| **Video mode** (extension) | Receives one channel with composite video out | That channel, reduced accuracy [TBV] | Composite video (CVBS) |
 | **Multi-channel mode** (extension) | Hops between up to 8 channels, about 1000 readings per second on each | One selected channel | Blanked |
+
+Video and full-range RSSI cannot share the C5's capture hardware, so video
+is its own mode. Lap-timing hosts need no video and use RX5808 mode; goggle
+and video-diversity hosts select video mode (7.2).
+
+Every power-on starts in RX5808 mode. A host that wants another mode
+requests it as soon as it has found the receiver; the switch happens in
+place, without a restart, and the host confirms it by reading INFO
+(7.4). RX5808 and multi-channel mode switch within about 10 ms.
 
 Multi-channel mode is time-multiplexed, not simultaneous: the receiver sees
 one channel at a time and visits each in turn, roughly every millisecond.
@@ -119,6 +129,9 @@ DATA   ======A0==A1==A2==A3==RW==D0== ... =D18=D19=============
 - **Extra clocks** after the 25th are ignored, so hosts that send 32-clock
   (4-byte) frames work.
 - **Frames of fewer than 25 clocks** are discarded.
+- **A frame of all ones** (25 or more 1 bits) is ignored: it is what an
+  undriven bus reads through a pull-up, not a command. (As a write it
+  would be 0x0F = 0xFFFFF; hosts reset with 0x0F = 0.)
 - **CLOCK idles low** (SPI mode 0). DATA may change while CLOCK is low.
 
 ### 3.2 Bus speed
@@ -276,7 +289,7 @@ DATA   ==A0==A1==A2==A3==R/W=0==>|-D0------|-D1----- ... -D19-|  (released)
 | Analog RSSI pin | Yes | PWM + RC; curve matched to a real module [TBV] |
 | RSSI valid after tune | Yes, within 35 ms [TBV] | |
 | Register read-back | **Yes (better than the original)** | Real modules never answer |
-| Composite video | Yes (RX5808 mode) | 6-bit; image quality below an RX5808 at long range [TBV] |
+| Composite video | Yes (video mode, selected with EXT MODE = 2) | 6-bit; image quality below an RX5808 at long range [TBV]. Not in the default RX5808 mode |
 | Video off via PD_VAMP / PD_VCLAMP | Ignored by default | RSSI-only hosts set these bits; honouring them would blank goggle hosts' video |
 | Audio output (A6.5M) | **No** | No pin or audio decoder. Possible on a future custom board. |
 | Synthesizer/VCO/DFC/audio/receiver tuning registers 0x02-0x09 | Stored only | Different radio; these have no meaning on the C5 |
@@ -303,11 +316,11 @@ a sub-register number and a 16-bit value:
 
 | Sub | Name | Value | Meaning |
 |---|---|---|---|
-| 0x0 | MODE | 0 or 1 | 0 = RX5808 mode, 1 = multi-channel mode. The receiver restarts its radio in the new mode, keeping every register and slot setting; this takes up to 2 s [TBV]. During the switch the RSSI pin holds its floor level and INFO reports the switch (9.1). |
+| 0x0 | MODE | 0-2 | 0 = RX5808 mode, 1 = multi-channel mode, 2 = video mode. The receiver switches in place, without restarting, keeping every register and slot setting: **RX5808 <-> multi-channel within 10 ms** [TBV]; into or out of video mode up to 2 s [TBV]. During the switch the RSSI pin holds its floor level and INFO reports the switch (9.1); the switch is confirmed when INFO reports the new mode with no switch in progress (7.4). Writing the mode already in use does nothing. **Every power-on starts in RX5808 mode** (7.4). |
 | 0x1-0x8 | SLOT1_MHZ ... SLOT8_MHZ | 0 or 5180-5945 | Frequency of slot *n* in MHz (exact, no 2 MHz step); 0 = slot off. Takes effect at the next hop cycle. |
 | 0x9 | RSSI_PIN_SLOT | 1-8 | The slot whose RSSI drives the analog pin in multi-channel mode. Default 1. |
 | 0xA | GAIN | 0, or 1-83 | 0 = firmware default (60). 1-83 forces that receiver gain index. Lower values avoid overload with a quad very close to the receiver. |
-| 0xB | READ_SELECT | 0-3 | Latch block *n* for the next fast readout frame (section 8). |
+| 0xB | READ_SELECT | 0-3, or 0x80 + n | *n*: snapshot block *n* for the next frame, which must be its readout frame (section 8). 0x80 + *n*: re-arm the last snapshot for one more readout frame, without taking a new one (a retry that keeps a PEAKS interval intact). |
 | 0xC | OPTIONS | bit field | Bit 0: smoothing (median of 3, 1 = on, default on). Others reserved, write 0. |
 | 0xD-0xE | Reserved | 0 | |
 | 0xF | NOP | any | Does nothing |
@@ -338,6 +351,39 @@ So version 0.9 returns **0xC5009**. A real RX5808 does not drive DATA; with
 a pull-up the host reads 0xFFFFF, and without one an undefined value that
 won't match. Hosts should only use the extension after a matching identify.
 
+### 7.4 Mode at power-on and mode switching
+
+**Every power-on starts in RX5808 mode**, with every setting at its
+default: the RTC6715 registers (section 4), GAIN, OPTIONS, READ_SELECT,
+and the slots (slot 1 follows register 0x01, slots 2-8 off, RSSI_PIN_SLOT
+1). Nothing is kept across power cycles, so a receiver moved from one host
+to another always starts as a plain RX5808, and legacy hosts never see
+another mode.
+
+Mode switches happen in place, without a restart. RX5808 mode and
+multi-channel mode share the same receiver path, so switching between them
+is quick (within 10 ms [TBV]); video mode uses different hardware and
+takes longer (up to 2 s [TBV]). A 0x0F reset write (section 4.3) does not
+change the mode.
+
+**At start-up, a host that uses the extension:**
+
+1. Detects the C5 (section 12.1).
+2. Writes MODE with the mode it wants (skip for RX5808 mode, the
+   power-on mode).
+3. Confirms the switch: reads INFO (block 0, section 9.1) until byte 6
+   reports the requested mode and flags bit 1 (switch in progress) is
+   clear. For multi-channel mode this is expected within 10 ms [TBV];
+   give up after 2 s and treat the receiver as a plain RX5808.
+4. Writes its mode's settings (slots, RSSI_PIN_SLOT, GAIN) as needed. Slot
+   writes may also come before the MODE write; they are kept by the
+   switch.
+
+**If the receiver restarts** (power glitch, brown-out), it comes back in
+RX5808 mode. A host in another mode notices this in the PEAKS block (the
+sequence number starts again: the first snapshot after power-on is 1) or by
+reading INFO, and repeats steps 2-4.
+
 ---
 
 ## 8. Extension: fast readout
@@ -349,7 +395,10 @@ to 4 MHz, using the C5's SPI hardware. It takes two frames:
    rises, the C5 takes a snapshot of block *n*. For the PEAKS block this also
    starts a new peak interval (9.2).
 2. **Wait** at least **50 µs**.
-3. **Readout frame:**
+3. **Readout frame: the very next frame.** The C5 cannot tell a readout
+   frame from a write when SELECT falls, so it treats the frame right after
+   a request as the readout. Send nothing else in between (on a shared bus,
+   other modules' frames with this receiver's SELECT high don't count).
    1. The host sets DATA as input with pull-up and takes SELECT low.
    2. It waits at least **20 µs**, then sends 8 × L clocks (L = block
       length in bytes).
@@ -360,9 +409,13 @@ to 4 MHz, using the C5's SPI hardware. It takes two frames:
 4. The host may drive DATA again **10 µs** after SELECT rises.
 
 A host may stop early (fewer clocks) or clock past the end; bits past the
-end read as 1. Each request latches one snapshot: further readout frames
-return the same bytes until the next request, so a host can retry a
-readout whose CRC failed.
+end read as 1. A block is at most 64 bytes, one SPI transfer of the C5's
+hardware without DMA.
+
+**Retry:** a request arms exactly one readout frame. To read the same
+snapshot again (for example after a CRC error), send READ_SELECT = 0x80 + *n*
+and another readout frame: the C5 sends the same bytes without taking a new
+snapshot, so a PEAKS interval is not reset by the retry.
 
 ```
          request (write, READ_SELECT=1)        readout frame
@@ -391,15 +444,15 @@ discard a block whose CRC does not match, and may read it again (see above).
 | 2 | 1 | Protocol minor version |
 | 3 | 1 | Capabilities: bit 0 video, bit 1 multi-channel, bit 2 fast readout, bit 3 legacy read-back |
 | 4 | 2 | Firmware version (major × 256 + minor) |
-| 6 | 1 | Current mode (0 RX5808, 1 multi-channel) |
+| 6 | 1 | Current mode (0 RX5808, 1 multi-channel, 2 video). 0 after every power-on (7.4). |
 | 7 | 1 | Flags: bit 0 powered down, bit 1 tuning or mode switch in progress (RSSI not valid), bit 2 receiver overload seen since the last INFO read |
-| 8 | 2 | RX5808 mode: tuned frequency in MHz. Multi-channel mode: RSSI-pin slot's frequency. |
+| 8 | 2 | RX5808 and video mode: tuned frequency in MHz. Multi-channel mode: RSSI-pin slot's frequency. |
 | 10 | 1 | Active slot mask (bit *n*-1 = slot *n* on) |
 | 11 | 1 | Gain index in use |
 | 12 | 2 | Readings per second per active slot (multi-channel), or block-power rate (RX5808 mode) |
 | 14 | 2 | CRC-16 |
 
-### 9.2 Block 1: PEAKS (8 + 8 × n + 2 bytes)
+### 9.2 Block 1: PEAKS (10 + 6 × n + 2 bytes)
 
 Each request starts a new **peak interval**. The block reports, for each
 active slot, the highest RSSI seen in the interval just ended, how long
@@ -407,18 +460,19 @@ before the snapshot it occurred, and the latest reading.
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 2 | Sequence number, +1 per PEAKS snapshot |
+| 0 | 2 | Sequence number, +1 per PEAKS snapshot (starts again from 1 after a receiver restart) |
 | 2 | 4 | `snap_us`: the C5's microsecond clock at the snapshot (for gap and continuity checks) |
 | 6 | 1 | Slot mask: which slots follow, in ascending order |
-| 7 | 1 | Flags: bit 0 readings were missed in this interval (mode switch or retune) |
-| 8 + 8k | 2 | Slot *k*: peak RSSI (section 10.2), 0 if no reading |
-| 10 + 8k | 2 | Slot *k*: `age_us`, time from the first reading equal to the peak to the snapshot; 0xFFFF = 65.5 ms or more |
-| 12 + 8k | 2 | Slot *k*: latest RSSI |
-| 14 + 8k | 1 | Slot *k*: number of readings in the interval (saturates at 255) |
-| 15 + 8k | 1 | Slot *k*: flags: bit 0 valid, bit 1 clipped (receiver overloaded) in this interval |
-| 8 + 8n | 2 | CRC-16 |
+| 7 | 1 | Valid mask: bit *n*-1 set = slot *n* had at least one reading in the interval |
+| 8 | 1 | Clipped mask: bit *n*-1 set = slot *n* was overloaded (clipped) in the interval |
+| 9 | 1 | Flags: bit 0 readings were missed in this interval (mode switch or retune) |
+| 10 + 6k | 2 | Slot *k*: peak RSSI (section 10.2), 0 if no reading |
+| 12 + 6k | 2 | Slot *k*: `age_us`, time from the first reading equal to the peak to the snapshot; 0xFFFF = 65.5 ms or more |
+| 14 + 6k | 2 | Slot *k*: latest RSSI |
+| 10 + 6n | 2 | CRC-16 |
 
-8 slots = 74 bytes = 592 clocks, about 0.6 ms at 1 MHz.
+8 slots = 60 bytes = 480 clocks, about 0.5 ms at 1 MHz (2 ms at 250 kHz,
+measured). The layout fits the 64-byte block limit (section 8).
 
 The snapshot is taken when the request frame's SELECT rises, so the peak
 happened `age_us` before that moment on the host's own clock. No clock
@@ -490,7 +544,8 @@ they do for an RX5808.
 | Fast readout: SELECT low to first clock | >= 20 µs |
 | C5 releases DATA after SELECT rises | <= 5 µs |
 | Host drives DATA after a read frame | >= 10 µs after SELECT rises |
-| MODE switch | <= 2 s [TBV] |
+| MODE switch, RX5808 <-> multi-channel (in place) | <= 10 ms [TBV] |
+| MODE switch into or out of video mode (in place) | <= 2 s [TBV] |
 | Multi-channel: readings per slot (8 slots) | about 1000 per second [TBV] |
 | Multi-channel: time between readings of one slot | about 1 ms, at most 2 ms [TBV] |
 | Max bus clock | 4 MHz [TBV] |
@@ -513,12 +568,15 @@ Nothing changes: tune with 0x01, wait 35 ms, read the analog RSSI pin.
 
 ### 12.3 Multi-pilot timing
 
-1. Write SLOT1-SLOTn with the pilots' frequencies, then MODE = 1.
-2. Poll INFO until it reports multi-channel mode with no switch in
-   progress (up to 2 s).
+1. Once the C5 is detected, write MODE = 1 and read INFO until it reports
+   multi-channel mode with no switch in progress (expected within 10 ms;
+   give up after 2 s). Every power-on starts in RX5808 mode (7.4).
+2. Write SLOT1-SLOTn with the pilots' frequencies (before or after the
+   MODE write).
 3. Every **5-10 ms**: request PEAKS (READ_SELECT = 1), note the host time
    `t_req` when the request frame's SELECT rises, wait 50 µs, read
-   8 + 8n + 2 bytes, and check the CRC.
+   10 + 6n + 2 bytes in the next frame, and check the CRC. On a CRC error,
+   re-read the same snapshot with READ_SELECT = 0x81 (section 8).
 4. For each valid slot, the peak happened at `t_req - age_us` on the host's
    own clock. Feed `(peak, t_req - age_us)` into the lap logic as one sample
    per poll. Because the C5 holds the peak over the whole interval, a pass
@@ -538,9 +596,9 @@ Use `snap_us` and the sequence number only to detect lost polls.
   early by about half its length.
 - Its bus pins (XIAO C6: DATA GPIO18, SEL GPIO1, CLK GPIO19) need no wiring
   change. DATA must switch to input with pull-up for read frames.
-- At its current 300 µs clock phases a PEAKS readout takes about 0.35 s,
+- At its current 300 µs clock phases a PEAKS readout takes about 0.3 s,
   far too slow. Use short clock phases for readout frames: the C5 accepts up to
-  4 MHz, and a 2 µs phase (250 kHz) reads 8 slots in about 2.4 ms.
+  4 MHz, and a 2 µs phase (250 kHz) reads 8 slots in about 2 ms (measured).
 
 ### 12.4 RotorHazard
 
@@ -557,6 +615,10 @@ Use `snap_us` and the sequence number only to detect lost polls.
 | Version | Date | Changes |
 |---|---|---|
 | 0.9 | 2026-10-16 | First draft, written ahead of the firmware. |
+| 0.9.1 | 2026-10-17 | Video moves out of RX5808 mode into its own video mode (EXT MODE = 2): bench tests showed video and full-range RSSI can't share the capture hardware. RX5808 mode's video pin is blanked. |
+| 0.9.2 | 2026-10-17 | MODE kept across power cycles (superseded by 0.9.3). |
+| 0.9.3 | 2026-10-17 | Mode switches happen in place, without a restart: RX5808 <-> multi-channel within 10 ms, video up to 2 s. Every power-on starts in RX5808 mode; nothing is kept across power cycles. Hosts request their mode once the C5 is detected and confirm the switch by reading INFO (7.4); after a receiver restart they request it again. Writing the current mode is a no-op. INFO mode byte lists video (2). |
+| 0.9.4 | 2026-10-18 | From the first firmware (Phase C2): blocks are at most 64 bytes (one SPI transfer without DMA), so PEAKS is repacked to 10 + 6n + 2 bytes (60 for 8 slots): valid and clipped flags move into header masks, the per-slot reading count is dropped. The readout frame must be the frame right after its request; a retry re-arms the same snapshot with READ_SELECT = 0x80 + n (no longer "repeated readouts return the same bytes"). All-ones frames are ignored. |
 
 ---
 
