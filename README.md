@@ -17,11 +17,11 @@ The host interface is specified in the
 (CC BY 4.0, so hosts under any license can implement it). This README
 covers the hardware, flashing, and how to integrate a host.
 
-> **Status: pre-release (firmware 0.1, interface v0.9.6).** RX5808 mode,
+> **Status: pre-release (firmware 0.1, interface v0.9.8).** RX5808 mode,
 > multi-channel mode and the bus extension are implemented and bench-tested
-> (see [What's verified](#whats-verified)). Composite video is planned
-> (video mode) but not implemented yet; the RSSI pin's voltage curve is
-> not yet matched to a real RX5808.
+> (see [What's verified](#whats-verified)), and the RSSI pin is matched to
+> real RX5808 modules ([RSSI curve](#rssi-curve)). Composite video is
+> planned (video mode) but not implemented yet.
 
 ---
 
@@ -29,12 +29,12 @@ covers the hardware, flashing, and how to integrate a host.
 
 | | |
 |---|---|
-| Board | Seeed Studio XIAO ESP32-C5 (no extra RF parts) |
+| Board | Seeed Studio XIAO ESP32-C5 with its U.FL antenna (no other RF parts; lap timers may leave the antenna off) |
 | Host interface | RX5808 / RTC6715 3-wire bus (DATA, SELECT, CLOCK), LSB first, 25-bit frames |
 | Bus speed | Any host speed up to **4 MHz** (writes and fast readout) |
 | Frequencies | 5645-5945 MHz (R1-R8 received; tuning checked up to E8 = 5945); 5180-5644 tunable, not verified |
 | Tuning | RX5808 register 0x01, same formula and 2 MHz step |
-| RSSI output | Analog pin: PWM through a 2-stage RC filter, 0 to ~1.03 V |
+| RSSI output | Analog pin on a real RX5808's curve: ~0.4 V with no signal, ~15 mV/dB, ~1.08 V where an RX5808 saturates, then ~4 dB more up to ~1.19 V ([RSSI curve](#rssi-curve)) |
 | RSSI rate, RX5808 mode | ~4,900 readings/s; valid ~0.35 ms after a retune (RX5808 spec: 35 ms) |
 | Multi-channel mode | Up to 8 channels, ~1,050 readings/s each, worst gap ~1.1 ms |
 | Digital RSSI | 1/16 dB, peak-hold per channel with the time of the peak |
@@ -51,9 +51,11 @@ covers the hardware, flashing, and how to integrate a host.
 
 ### What you need
 
-- A **Seeed Studio XIAO ESP32-C5**. Lap timing needs no antenna: the
-  board's own receive path is sensitive enough (and an antenna makes
-  overload at the gate worse).
+- A **Seeed Studio XIAO ESP32-C5**, normally **with its antenna** plugged
+  into the U.FL socket (the small FPC antenna the board ships with). The
+  antenna gives RX5808 sensitivity; without it the C5 is 30-40 dB less
+  sensitive, which a lap timer can use on purpose (see
+  [Lap timers: antenna or no antenna](#lap-timers-antenna-or-no-antenna)).
 - For the analog RSSI pin: **3 resistors and 2 capacitors** (below).
 - Recommended: a **330 Ω resistor in series with DATA**.
 
@@ -78,11 +80,12 @@ ladder.
 ### RSSI filter
 
 The C5 has no DAC, so RSSI is a 78 kHz PWM on D0, filtered in two stages.
-Stage 1 also divides 3.3 V down to an RX5808-like 1.03 V full scale.
+Stage 1 also divides 3.3 V down to a 1.32 V full scale: room for the RX5808
+curve (up to ~1.08 V) plus the C5's headroom above it.
 
 ```
  XIAO C5                                                  Host
-  D0 ──[ R1 2.2 kΩ ]──●──[ R3 1 kΩ ]──●──────────────────► RSSI input
+  D0 ──[ R1 1.5 kΩ ]──●──[ R3 1 kΩ ]──●──────────────────► RSSI input
                       │ A             │ B
                  ┌────┴────┐          │
                R2 1 kΩ   C1 220 nF   C2 100 nF
@@ -92,16 +95,48 @@ Stage 1 also divides 3.3 V down to an RX5808-like 1.03 V full scale.
 
 | Part | Value | Between |
 |---|---|---|
-| R1 | 2.2 kΩ | D0 and node A |
+| R1 | 1.5 kΩ (brown-green-red; or two 3 kΩ in parallel) | D0 and node A |
 | R2 | 1 kΩ | node A and GND |
 | C1 | 220 nF (0.22 µF, "224"), ceramic/film | node A and GND |
 | R3 | 1 kΩ | node A and node B |
 | C2 | 100 nF (0.1 µF, "104"), ceramic/film | node B and GND |
 
-Measured: output within 4 mV of the design at every level, settles in well
-under 50 ms, ripple ~1 ADC count at the host, source impedance ~1.7 kΩ.
-Use nF parts: µF capacitors give the right voltage but respond ~1000x too
-slowly for lap timing.
+Measured: output within 10 mV of the design from 0 to 1.31 V, settled
+within 50 ms, source impedance ~1.6 kΩ (a host's 100 kΩ pulldown, as on
+FPVRaceOne, lowers it ~1.6%). Check the values: µF capacitors give the
+right voltage but respond ~1000x too slowly, and a 1.5 Ω resistor in place
+of 1.5 kΩ removes the divider.
+
+### RSSI curve
+
+The RSSI pin follows a real RX5808: measured against two RX5808 modules
+side by side with the C5 (on its antenna), one VTX at 25 mW moved from far
+away to 5 cm.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/rssi_curve_dark.svg">
+  <img alt="RSSI pin voltage against signal level: the C5 follows two real RX5808 modules from about 0.4 V at the noise floor, at about 15 mV per dB, to about 1.08 V where both RX5808s saturate, then keeps rising about 4 dB more to 1.19 V." src="docs/images/rssi_curve_light.svg">
+</picture>
+
+| Signal (dB above the noise floor) | C5 RSSI pin | RX5808 module A | RX5808 module B |
+|---|---|---|---|
+| 0 (no signal) | 0.40 V | 0.40 V | 0.35 V |
+| 10 | 0.55 V | 0.56 V | 0.39 V |
+| 20 | 0.70 V | 0.77 V | 0.60 V |
+| 30 | 0.85 V | 0.84 V | 0.66 V |
+| 40 | 1.01 V | 1.01 V | 0.82 V |
+| 48 | 1.11 V | 1.08 V (saturated) | 1.08 V (saturated) |
+| 52 (C5 clips) | 1.19 V | 1.08 V | 1.09 V |
+
+- **Linear in dB** like the RX5808's log detector: ~0.37-0.40 V with no
+  signal, ~15 mV/dB. The two real modules differ by up to ~150 mV from each
+  other (module spread); the C5 sits within that spread.
+- **Headroom:** both RX5808s saturate at ~1.08 V; the C5 keeps resolving
+  ~4 dB more. Near the gate a host sees a peak instead of a flat plateau,
+  which matters to lap timers that stamp the first sample of the maximum.
+- **Gain-independent:** the curve is referred to the receiver input, so a
+  host's EXT GAIN does not shift it. Hosts calibrate thresholds per receiver
+  as they do with an RX5808.
 
 ### Example: FPVRaceOne on a XIAO ESP32-C6
 
@@ -214,15 +249,62 @@ a receiver restart) is in the
 
 ---
 
+## Lap timers: antenna or no antenna
+
+The antenna decides how far out the receiver starts to see a quad. Both
+setups use the same firmware and settings (default gain 51); only the
+host's thresholds differ.
+
+| | With the antenna | Without the antenna |
+|---|---|---|
+| Sensitivity | Like an RX5808 | 30-40 dB lower |
+| Sees a 25 mW quad from | Across a house, like an RX5808 | About 1-2 m |
+| Near the gate | Rises ~4 dB past where an RX5808 flattens out | Still rising at the gate: the peak is the pass |
+| Best for | Drop-in RX5808 behaviour, wide gates, scanners | Gates the quads fly within ~1-2 m of; ignoring quads elsewhere |
+
+Bench measurement, one 25 mW VTX held at a series of distances, the
+receivers side by side (RSSI-pin voltages; the antenna-less column is
+computed from the measured level with the current curve):
+
+| VTX position | RX5808 (FPVScanner, with antenna) | C5 with antenna | C5 without antenna |
+|---|---|---|---|
+| Another room | 0.41-0.50 V | 0.51 V | 0.37 V (no signal) |
+| Half way | 0.70-0.85 V | 0.65-0.82 V | 0.37 V (no signal) |
+| About 1-2 m | 1.0-1.08 V (saturating) | 1.06-1.19 V | ~0.56 V |
+| About 5 cm | 1.08 V (saturated) | 1.19 V (clipped) | ~0.80-0.85 V |
+
+**Why a lap timer might leave it off.** An RX5808 at race power
+saturates metres before the gate, so its RSSI is flat across the pass;
+a timer that stamps the first sample of the maximum (FPVRaceOne, for
+example) then stamps early by about half the plateau. Without the antenna
+the C5 is still climbing as the quad goes through, so the maximum is the
+pass itself, and quads in the pits or across the field stay at the floor.
+
+**What changes for the host:**
+- **Lower thresholds.** The swing is smaller: from ~0.37 V to ~0.85 V at
+  25 mW (more at higher VTX power; at 600 mW it reaches the top of the
+  range within ~5 cm). Run the host's calibration (FPVRaceOne's
+  calibration wizard, RotorHazard's enter/exit tuning) with the antenna
+  off.
+- **Gate geometry.** The quads must pass within about 1-2 m of the
+  receiver at 25 mW; mount it at the gate, close to the flight line.
+- Everything else is unchanged: tuning, both modes, the bus extension.
+
+These are bench numbers from one VTX in one house; the exact distances
+depend on VTX power, antenna orientation and the gate. Track tests (and
+near/far with several quads) are still to come.
+
+---
+
 ## Behaviour reference
 
 | | |
 |---|---|
-| Power-on | RX5808 mode, 5865 MHz (register 0x01 default), gain 60, smoothing on, all registers at RTC6715 defaults; nothing is kept across power cycles |
+| Power-on | RX5808 mode, 5865 MHz (register 0x01 default), gain 51, smoothing on, all registers at RTC6715 defaults; nothing is kept across power cycles |
 | Modes | 0 = RX5808 (one channel), 1 = multi-channel (up to 8 slots), 2 = video (not implemented: the request is ignored) |
 | Mode switch | In place, no restart: applied in 0.03-0.8 ms |
-| RSSI pin | Linear in dB from -60 dBFS (0 V) to 0 dBFS (1.03 V) for now (provisional; to be matched to a real RX5808); 0 V in power-down. In multi-channel mode it follows the RSSI-pin slot (EXT RSSI_PIN_SLOT, default slot 1); a legacy 0x01 write retunes that slot |
-| Gain | Fixed (index 60 by default; EXT GAIN overrides). The vendor AGC is off, so peaks aren't flattened |
+| RSSI pin | The RX5808 curve ([RSSI curve](#rssi-curve)): ~0.4 V with no signal to ~1.19 V; 0 V in power-down. In multi-channel mode it follows the RSSI-pin slot (EXT RSSI_PIN_SLOT, default slot 1); a legacy 0x01 write retunes that slot |
+| Gain | Fixed (index 51 by default; EXT GAIN overrides). The vendor AGC is off, so peaks aren't flattened. 51 keeps full sensitivity (within 1 dB of 60) and moves the clip point ~9 dB up |
 | Readings | Each is band power around the channel from 256-sample 10-bit snapshots at 80 MS/s; RX5808 mode averages 4 snapshots per reading |
 | Legacy register reads | Readings pause during a read's data bits: a ~5 ms gap per read at RotorHazard timing (hosts read right after a retune, so it doesn't affect lap timing). Extension block readouts don't pause readings |
 | Bus robustness | Glitch filters on all three lines; frames under 25 clocks and all-ones frames are ignored; a stuck SELECT can't stall the receiver |
@@ -253,11 +335,13 @@ The full test history is in the
 - **No video yet.** Video and full-range RSSI can't share the C5's capture
   hardware, so video will be its own mode (6-bit composite through a
   resistor ladder, after [C5VRX](https://github.com/Twotoz/C5VRX)).
-- **RSSI curve:** the analog pin is linear in dB but not yet matched to a
-  real RX5808's voltage curve; recalibrate host thresholds.
-- **Overload:** a VTX very close to the receiver clips its input (as with
-  an RX5808); near/far behaviour with two VTXs at race power is not yet
-  measured.
+- **Antenna:** needed for RX5808 sensitivity; without it the receiver only
+  responds within a few metres (see [Lap timers](#lap-timers-antenna-or-no-antenna)).
+- **Overload:** a VTX within a few cm clips the C5's input (at 25 mW, about
+  5 cm on the bench), ~4 dB later than an RX5808 saturates; near/far
+  behaviour with two VTXs at race power is not yet measured.
+- **RSSI curve accuracy:** matched to two RX5808 modules on one channel
+  (R3); thresholds still need calibrating per receiver, as with an RX5808.
 - **No Wi-Fi** on the receiver chip: the radio is used as the receiver.
 - **Undocumented hardware paths:** the firmware uses undocumented ESP32-C5
   PHY and debug-capture features, so it is pinned to ESP-IDF 6.0.2.
@@ -305,9 +389,10 @@ with a `-beta.N` tag.
 
 ```
 src/            receiver firmware (receiver.c, rx5808_bus.c, regs.c, hop_engine.c, ...)
-tools/          build wrapper (pio.ps1), reset-free upload hook, release targets
+tools/          build wrapper (pio.ps1), reset-free upload hook, release targets, wiki generator
 .github/        release workflow (CI)
-docs/           host datasheet, development log
+docs/           host datasheet, development log, chart images,
+                wiki/ (GitHub wiki pages, generated by tools/make_wiki.py)
 platformio.ini, CMakeLists.txt, sdkconfig.defaults, partitions.csv
 ```
 

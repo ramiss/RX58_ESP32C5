@@ -11,7 +11,8 @@ bench results, dead ends and lessons. For using the receiver, see the
 |---|---|---|
 | A | Bench-test stock esp-sdr: channel coverage 5645-5945 MHz, gain/overload, snapshot rate | **Done 2026-10-09** (bench tool `tools/phase_a`, not published) |
 | B0 | IQ loopback pad test (18-GPIO map on a bare XIAO) | **Done 2026-10-16**: all candidates pass, zero errors in a 9-min soak; the negative control fails as it must |
-| B1 | SPI interface datasheet: legacy RX5808 emulation + multi-channel extension | **Done** (v0.9 draft 2026-10-16, now v0.9.6) |
+| B1 | SPI interface datasheet: legacy RX5808 emulation + multi-channel extension | **Done** (v0.9 draft 2026-10-16, now v0.9.8) |
+| C3 | RSSI curve matched to real RX5808s | **Done 2026-10-18**: antenna required; gain 51; filter R1 1.5 kΩ |
 | B2 | Multi-channel hop engine: up to 8 channels at ~1 kHz each | **Done 2026-10-17**: 1061 Hz per channel on R1-R8, max gap 1.1 ms (`-e hop`, bench tool `tools/phase_b`) |
 | B3 | RX5808-mode RSSI -> PWM RSSI pin | **Done 2026-10-17** (mode without video): 10-bit snapshots, 4360 readings/s, tune-to-valid 0.35 ms |
 | C1 | Legacy SPI slave: RX5808 frames at any speed, register read-back | **Done 2026-10-18**: 18/18 bench checks, RC filter checked, unmodified FPVRaceOne times laps |
@@ -190,6 +191,53 @@ still 18/18 on the same firmware.
   - The INFO readings/s window must restart on a mode or slot change.
   - Snapshots pause only during a legacy read's data bits (not its ~5 ms
     address phase, which cost a 5.8 ms reading gap in the first soak).
+
+## Phase C3: RSSI curve (2026-10-18)
+
+Tool: `tools/rssi_curve/rssi_curve.py` (pairs the C5's readings with
+reference receivers over the same 100-200 ms; raw streams kept), chart:
+`tools/rssi_curve/plot_curve.py`. Mach 3 VTX on R3 (5732 MHz); the
+receivers side by side, RX5808s aimed at the VTX. References: an
+FPVRaceOne (C6 + RX5808, 100 kΩ RSSI pulldown, its USB `rssi/start`
+stream) and an FPVScanner's C6 + RX5808 reflashed with the `tools/spi_host`
+test host (RSSI pin read directly in mV). The C5's own RSSI pin read by the
+bench test host.
+
+- **Without the C5's antenna it can't follow an RX5808.** At 600 mW and
+  25 mW alike, both RX5808s ran from floor to saturation while the C5 was
+  still within 2 dB of its noise floor: the C5 on a bare U.FL socket is
+  30-40 dB less sensitive. (An early 600 mW run looked closer only because
+  the FPVRaceOne wasn't pointed at the VTX: its RX5808 sits over a ground
+  plane and is directional.)
+- **With the antenna the two match:** C5 floor and RX5808 floors coincide,
+  and the RX5808 is linear in dB: ~396 mV (module A) / ~345 mV (module B)
+  with no signal, ~15 mV/dB, saturating at ~1.08 V.
+- **Gain vs headroom** (VTX at a fixed spot, 3 passes): the signal falls
+  ~1.0 dB per gain index; the floor falls almost as fast down to ~51, then
+  flattens into the ADC floor (~-57.5 dBFS below index 38). SNR: 40.1 dB at
+  60, 39.2 at 54 and 51, 37.3 at 48, 34.3 at 45. Default gain now **51**:
+  < 1 dB of sensitivity for ~9 dB of clip margin.
+- **Curve** (`src/rssi_out.*`): mV = 370 + 15 x (level - floor),
+  level = dBFS + (60 - gain), clamped 370-1,200 mV; filter R1 2.2 kΩ ->
+  1.5 kΩ for a 1.32 V full scale (rc check: within 10 mV, 0-1.31 V).
+- **Confirmation run** (5,896 pairs): the C5 pin sits within the two
+  modules' spread from the floor up (e.g. 10 dB: 0.55 V vs 0.56 / 0.39 V;
+  40 dB: 1.01 V vs 1.01 / 0.82 V), and keeps rising ~4 dB past the RX5808s'
+  saturation to 1.19 V. The headroom measured smaller than the gain sweep's
+  9 dB; the C5 clips at 0 dBFS within ~5 cm at 25 mW.
+- **FPVRaceOne counts:** its DMA ADC path is ~9.6 mV per count (113 counts
+  = 1,092 mV at saturation), not the 4.02 mV its polled-path scale implies.
+- Lessons: the bare C6 + RX5808 rig dropped its USB when the module was
+  powered: FPVRaceOne's 100 µF + 10 µF across the module's 5 V are needed.
+  A 1.5 Ω resistor in place of 1.5 kΩ (R1) looked exactly like a missing
+  divider. FPVScanner hardware takes our test host unchanged (same pins);
+  its Arduino firmware entered the ROM loader with esptool's normal USB
+  reset (the wedge is specific to our IDF 6.0.2 firmware).
+- Gain compensation moved to where readings leave the meter
+  (`receiver.c` input_level(), `RX_REF_GAIN` 60), so PEAKS, INFO, the RSSI
+  pin and the bench stream are all input-referred, as datasheet 10.2
+  specifies. Check (VTX off): the floor reads -46.1 / -46.6 / -45.9 at gains
+  60 / 57 / 54 (was a 5.4 dB spread), -44.3 at 51, -43.4 at 48.
 
 ## Flashing: why uploads avoid esptool's USB reset (2026-10-16)
 

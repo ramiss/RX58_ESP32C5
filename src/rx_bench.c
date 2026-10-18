@@ -10,11 +10,11 @@
 // receiver settings go through the register file exactly as a bus host's
 // frames do:
 //   F mhz      tune (register 0x01; the RX5808 2 MHz step applies)
-//   G g        gain (EXT GAIN; 0 = default 60)
+//   G g        gain (EXT GAIN; 0 = default, RX_DEFAULT_GAIN)
 //   Y m        mode (EXT MODE): 0 RX5808, 1 multi-channel
 //   S n mhz    slot n (1-8) frequency (EXT SLOTn; 0 = off)
 //   N n        RX5808 mode: snapshots per reading (1-32)
-//   P lo hi    PWM range in dBFS (duty 0 at lo, full at hi)
+//   P mv       RSSI filter full scale in mV at 100% duty (calibration)
 //   O duty     hold the PWM at duty 0-1023 (RC filter check); -1 = follow RSSI
 //   R / X      start / stop the stream
 //   T          statistics (resets them)
@@ -27,7 +27,8 @@
 //
 // Frames (bench_link.h framing), one per step while streaming:
 //   'Q' (RX5808 mode): u16 seq, u32 t_us (end of the reading), u16 mhz,
-//       u8 gain, u16 rssi (1/16 dB, 16 * (dBFS + 100), after smoothing),
+//       u8 gain, u16 rssi (1/16 dB, input-referred 16 * (dBFS + 100):
+//       dBFS as at RX_REF_GAIN, after smoothing; also min/max and 'M' rssi),
 //       u16 min, u16 max (snapshot spread), u8 clipped samples, u8 snapshots,
 //       u8 flags (1 = a snapshot failed, 2 = gain re-forced, 4 = frames
 //       dropped before this one, 8 = first reading after a retune), u32 us
@@ -108,11 +109,13 @@ static void print_stats(void)
 {
     const uint32_t tpu = esp_rom_get_cpu_ticks_per_us();
     printf("OK stats mode=%u steps=%lu readings=%lu fails=%lu gain_reforced=%lu dropped=%lu max_gap_us=%lu "
-           "cpu_us/step avg=%.1f max=%.1f last=%.2f dBFS duty=%lu rate=%lu/s/slot switches=%lu last_switch_us=%lu\n",
+           "cpu_us/step avg=%.1f max=%.1f last=%.2f dBFS duty=%lu pin_mv=%lu rate=%lu/s/slot switches=%lu "
+           "last_switch_us=%lu\n",
            receiver_mode(), (unsigned long)s_st.steps, (unsigned long)s_st.readings, (unsigned long)s_st.fails,
            (unsigned long)s_st.reforced, (unsigned long)bench_dropped(), (unsigned long)s_st.gap_max_us,
            s_st.steps ? (double)s_st.cpu_sum / s_st.steps / tpu : 0.0, (double)s_st.cpu_max / tpu,
-           s_st.last_rssi / 16.0 - 100.0, (unsigned long)rssi_out_duty(), (unsigned long)receiver_rate(),
+           s_st.last_rssi / 16.0 - 100.0, (unsigned long)rssi_out_duty(), (unsigned long)rssi_out_mv(),
+           (unsigned long)receiver_rate(),
            (unsigned long)receiver_switches(), (unsigned long)receiver_last_switch_us());
     memset(&s_st, 0, sizeof s_st);
 }
@@ -158,9 +161,9 @@ static void handle_line(char *line)
         receiver_set_per_reading((unsigned)a[0]);
         break;
     case 'P':
-        if (na != 2 || a[1] <= a[0]) { printf("ERR P lo_dbfs hi_dbfs\n"); return; }
-        rssi_out_range((int)a[0], (int)a[1]);
-        printf("OK pwm lo=%ld hi=%ld dBFS\n", a[0], a[1]);
+        if (na != 1 || a[0] < 500 || a[0] > 3300) { printf("ERR P full_scale_mv 500-3300\n"); return; }
+        rssi_out_full_scale((uint32_t)a[0]);
+        printf("OK pwm full scale %ld mV\n", a[0]);
         return;
     case 'O':
         // Bench: hold the RSSI PWM at a fixed duty (checks the RC filter).

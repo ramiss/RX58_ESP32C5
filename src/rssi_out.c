@@ -7,8 +7,8 @@
 #define DUTY_MAX  1023u
 #define PWM_HZ    78125u             // 80 MHz / 1024: ripple far above the RC corner
 
-static int32_t s_lo16 = 16 * (-60 + 100), s_hi16 = 16 * (0 + 100);
-static uint32_t s_duty;
+static uint32_t s_duty, s_mv;
+static uint32_t s_full_mv = RSSI_OUT_FULL_SCALE_MV;
 
 esp_err_t rssi_out_init(void)
 {
@@ -32,11 +32,9 @@ esp_err_t rssi_out_init(void)
     return ledc_channel_config(&c);
 }
 
-void rssi_out_range(int lo_dbfs, int hi_dbfs)
+void rssi_out_full_scale(uint32_t mv)
 {
-    if (hi_dbfs <= lo_dbfs) return;
-    s_lo16 = 16 * (lo_dbfs + 100);
-    s_hi16 = 16 * (hi_dbfs + 100);
+    if (mv >= 500 && mv <= 3300) s_full_mv = mv;
 }
 
 static bool s_on = true;
@@ -61,9 +59,17 @@ void rssi_out_enable(bool on)
 void rssi_out_set(uint16_t rssi16)
 {
     if (s_forced >= 0) return;
-    int32_t v = rssi16;
-    uint32_t duty = !s_on || v <= s_lo16 ? 0u : v >= s_hi16 ? DUTY_MAX
-                  : (uint32_t)((v - s_lo16) * (int32_t)DUTY_MAX / (s_hi16 - s_lo16));
+    uint32_t duty = 0, mv = 0;
+    if (s_on) {
+        // 1/16 dB above the RX5808 floor (the reading is input-referred).
+        const int32_t above16 = (int32_t)rssi16 - 16 * (RSSI_OUT_FLOOR_DBFS + 100);
+        int32_t v = RSSI_OUT_FLOOR_MV + (above16 > 0 ? above16 * RSSI_OUT_MV_PER_DB / 16 : 0);
+        if (v > RSSI_OUT_MAX_MV) v = RSSI_OUT_MAX_MV;
+        mv = (uint32_t)v;
+        duty = (mv * DUTY_MAX + s_full_mv / 2) / s_full_mv;
+        if (duty > DUTY_MAX) duty = DUTY_MAX;
+    }
+    s_mv = mv;
     if (duty == s_duty) return;
     s_duty = duty;
     (void)ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
@@ -71,3 +77,4 @@ void rssi_out_set(uint16_t rssi16)
 }
 
 uint32_t rssi_out_duty(void) { return s_duty; }
+uint32_t rssi_out_mv(void) { return s_mv; }

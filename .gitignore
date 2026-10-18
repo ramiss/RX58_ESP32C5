@@ -26,3 +26,4 @@ phase_a
 !/tools/pio_upload.py
 !/tools/pio_targets.py
 !/tools/publish_release.py
+!/tools/make_wiki.py

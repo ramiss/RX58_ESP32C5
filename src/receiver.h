@@ -12,7 +12,16 @@
 #include "regs.h"
 
 #define RX_FW_VERSION      0x0001     // 0.1 (INFO bytes 4-5)
-#define RX_DEFAULT_GAIN    60u
+// Forced RX gain index.  With the antenna fitted, 51 keeps the receiver's
+// sensitivity (within 1 dB of 60: its noise floor falls with the gain down to
+// ~51) and leaves ~9 dB of headroom above where a real RX5808 saturates
+// (measured 2026-10-18, docs/DEVELOPMENT_LOG.md "RSSI curve").
+#define RX_DEFAULT_GAIN    51u
+// Every reading (PEAKS, INFO, the RSSI pin, the bench stream) is referred to
+// the receiver input: 16 * (dBFS + 100) as it would read at this gain index.
+// The signal moves ~1.0 dB per index (measured), so a reading taken at gain g
+// gets (RX_REF_GAIN - g) dB added and does not jump when the gain changes.
+#define RX_REF_GAIN        60u
 
 // What one receiver_step() produced, for the bench stream.
 typedef struct {

@@ -10,8 +10,9 @@
 //   each reading is the mean of N snapshots (default 4, ~4400 readings/s).
 // Multi-channel mode: hop_cycle() over the active slots (~1 kHz each with 8).
 //
-// Every reading goes through the optional median-of-3 (OPTIONS bit 0) into
-// the slot's peak-hold; the RSSI-pin slot drives the PWM. A READ_SELECT
+// Every reading is referred to the input (input_level(): gain-independent),
+// then goes through the optional median-of-3 (OPTIONS bit 0) into the slot's
+// peak-hold; the RSSI-pin slot drives the PWM. A READ_SELECT
 // request snapshots a block in the SPI interrupt (receiver_block()).
 
 #include "receiver.h"
@@ -81,6 +82,15 @@ static void reset_slot_state(void)
     s_missed = true;
     portEXIT_CRITICAL(&s_pk_mux);
     memset(s_hist_n, 0, sizeof s_hist_n);
+}
+
+// A meter reading (16 * (dBFS + 100) at the gain in use) referred to the
+// input: as it would read at RX_REF_GAIN. 0 stays 0 ("no reading").
+static uint16_t input_level(uint16_t raw)
+{
+    if (!raw) return 0;
+    const int32_t v = (int32_t)raw + 16 * ((int32_t)RX_REF_GAIN - (int32_t)s_cfg.gain);
+    return (uint16_t)(v < 1 ? 1 : v > 0xffff ? 0xffff : v);
 }
 
 static uint16_t smooth(unsigned slot, uint16_t v)
@@ -191,7 +201,7 @@ static bool step_rx5808(rx_result_t *out)
         while (bus_slow_frame_active()) {}
         if (!hop_capture(s_cfg.samples, NULL)) { failed = true; continue; }
         uint8_t c;
-        const uint16_t r = hop_measure(0, s_cfg.samples, &c);
+        const uint16_t r = input_level(hop_measure(0, s_cfg.samples, &c));
         sum += r;
         n++;
         clip += c;
@@ -245,6 +255,7 @@ static bool step_multi(rx_result_t *out)
     for (unsigned s = 0; s < REGS_SLOTS && k < n; ++s) {
         if (!(mask >> s & 1u)) continue;
         if (r[k].rssi) {
+            r[k].rssi = input_level(r[k].rssi);
             const uint16_t v = smooth(s, r[k].rssi);
             const int64_t t = now - (int64_t)(uint32_t)(now32 - (t0 + r[k].t_us));
             record(s, v, r[k].clip, t);

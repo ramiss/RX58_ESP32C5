@@ -2,7 +2,7 @@
 
 **Datasheet for hosts of the ESP32-C5 RX5808 replacement receiver**
 
-Version 0.9.6 (draft), 2026-10-18. This document is licensed under
+Version 0.9.8 (draft), 2026-10-18. This document is licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): anyone may
 implement this interface in host software under any license, including MIT.
 The receiver firmware itself is GPL-3.0-only and is a separate work.
@@ -94,7 +94,8 @@ SPI mode.
 | Logic levels | **3.3 V.** The C5's pins are **not 5 V tolerant.** Hosts with 5 V logic (Arduino Uno/Nano/Mega nodes) need a level shifter on all three bus lines. 3.3 V hosts (ESP32, STM32, RP2040) connect directly. |
 | DATA | Driven by the host for writes; driven by the C5 only during read frames while its SELECT is low. A **330 Ω series resistor** in the DATA line is recommended to limit current if host and C5 ever drive at once. |
 | SELECT, CLOCK | Inputs. Keep them defined at power-up (host pin driven, or 10 kΩ pull-up on SELECT). |
-| RSSI output | 0 to about 1.03 V, source impedance about 1 kΩ (section 10) |
+| RSSI output | About 0.4 V (no signal) to 1.19 V on a real RX5808's curve, full scale 1.32 V, source impedance about 1.6 kΩ (section 10) |
+| Antenna | The XIAO ESP32-C5's antenna on its U.FL socket gives RX5808 sensitivity. Without it the receiver is 30-40 dB less sensitive, which lap timers may use on purpose (10.3). |
 | Video | About 1 Vpp into 75 Ω (from the C5VRX resistor ladder) [TBV] |
 
 ### 2.3 Shared bus
@@ -287,7 +288,7 @@ DATA   ==A0==A1==A2==A3==R/W=0==>|-D0------|-D1----- ... -D19-|  (released)
 | R counter 0x00 | Yes | |
 | Power-down 0x0A = 0xFFFFF | Yes | |
 | Reset/wake via 0x0F | Yes | |
-| Analog RSSI pin | Yes | PWM + RC; curve matched to a real module [TBV] |
+| Analog RSSI pin | Yes | PWM + RC; curve matched to two real modules, with about 4 dB more headroom (10.1) |
 | RSSI valid after tune | Yes, within 35 ms | Measured ~0.35 ms |
 | Register read-back | **Yes (better than the original)** | Real modules never answer |
 | Composite video | Yes (video mode, selected with EXT MODE = 2) | 6-bit; image quality below an RX5808 at long range [TBV]. Not in the default RX5808 mode |
@@ -320,7 +321,7 @@ a sub-register number and a 16-bit value:
 | 0x0 | MODE | 0-2 | 0 = RX5808 mode, 1 = multi-channel mode, 2 = video mode. The receiver switches in place, without restarting, keeping every register and slot setting: **RX5808 <-> multi-channel within 10 ms** (measured under 1 ms); into or out of video mode up to 2 s [TBV]. During the switch the RSSI pin holds its floor level and INFO reports the switch (9.1); the switch is confirmed when INFO reports the new mode with no switch in progress (7.4). Writing the mode already in use does nothing. **Every power-on starts in RX5808 mode** (7.4). |
 | 0x1-0x8 | SLOT1_MHZ ... SLOT8_MHZ | 0 or 5180-5945 | Frequency of slot *n* in MHz (exact, no 2 MHz step); 0 = slot off. Takes effect at the next hop cycle. |
 | 0x9 | RSSI_PIN_SLOT | 1-8 | The slot whose RSSI drives the analog pin in multi-channel mode. Default 1. |
-| 0xA | GAIN | 0, or 1-83 | 0 = firmware default (60). 1-83 forces that receiver gain index. Lower values avoid overload with a quad very close to the receiver. |
+| 0xA | GAIN | 0, or 1-83 | 0 = firmware default (51). 1-83 forces that receiver gain index. Lower values avoid overload with a quad very close to the receiver. |
 | 0xB | READ_SELECT | 0-3, or 0x80 + n | *n*: snapshot block *n* for the next frame, which must be its readout frame (section 8). 0x80 + *n*: re-arm the last snapshot for one more readout frame, without taking a new one (a retry that keeps a PEAKS interval intact). |
 | 0xC | OPTIONS | bit field | Bit 0: smoothing (median of 3, 1 = on, default on). Others reserved, write 0. |
 | 0xD-0xE | Reserved | 0 | |
@@ -500,19 +501,25 @@ not match.
 ### 10.1 Analog pin
 
 - **Generation:** a PWM output filtered by two RC stages.
-- **Range:** 0 to about 1.03 V. The default curve maps the receiver's noise
-  floor to about 0.5 V and a very strong signal to about 1.1 V, rising
-  monotonically and roughly linearly in dB, like an RX5808. The exact curve
-  is matched to a measured RX5808 [TBV].
-- **Response:** about 0.5 ms (10-90 %). Ripple is below 1 mV, so a host that
-  takes the peak of fast ADC frames (FPVRaceOne) is not biased.
+- **Curve:** matched to real RX5808 modules (measured side by side,
+  2026-10-18): linear in dB, about **0.4 V with no signal**, about
+  **15 mV/dB**, about **1.08 V where an RX5808 saturates**. The receiver
+  keeps resolving about 4 dB beyond that, up to about **1.19 V** where it
+  clips. RX5808 modules differ from each other by up to about 150 mV; the
+  receiver sits within that spread.
+- **Full scale:** 1.32 V (filter at 100 % duty).
+- **Gain-independent:** the curve is referred to the receiver input, so EXT
+  GAIN (7.1) does not shift it.
+- **Response:** about 0.5 ms (10-90 %); ripple below the host ADC's own
+  noise, so a host that takes the peak of fast ADC frames (FPVRaceOne) is
+  not biased.
 - **Never perfectly flat:** a live receiver always shows a little movement,
   so host "dead receiver" checks behave as with an RX5808.
 - **During a tune or mode switch:** the pin holds the floor level until the
   new reading is valid.
 - **In power-down:** about 0 V.
-- **Source impedance:** about 1 kΩ. A 100 kΩ load (FPVRaceOne's pull-down)
-  costs about 1 %.
+- **Source impedance:** about 1.6 kΩ. A 100 kΩ load (FPVRaceOne's
+  pull-down) costs about 1.6 %.
 
 ### 10.2 Digital RSSI units
 
@@ -521,13 +528,43 @@ not match.
 | Type | Unsigned 16-bit |
 | Resolution | **1/16 dB** per count |
 | Zero point | 0 = no reading |
-| Usable span | about 50-60 dB above the noise floor [TBV] |
+| Scale | 16 × (level + 100), level in dB referred to the receiver input (the receiver's dBFS at gain index 60) |
+| Typical values | no signal about 864 (−46); the receiver clips about 1,744 (+9) at the default gain |
+| Usable span | about 50 dB above the noise floor (measured, default gain) |
 | Mapping to absolute power | Not calibrated in dBm |
 
 Readings are comparable between slots of the same receiver and mode. The
-firmware compensates for its own gain so a reading does not jump when the
-gain changes. Hosts should calibrate enter/exit thresholds per receiver, as
-they do for an RX5808.
+firmware compensates for its own gain (about 1.0 dB per gain index,
+measured), so a reading does not jump when EXT GAIN changes; at low gains
+(below about 51) the noise floor rises slightly because sensitivity drops.
+Hosts should calibrate enter/exit thresholds per receiver, as they do for an
+RX5808.
+
+### 10.3 Antenna and lap timing
+
+The antenna sets how far out the receiver responds; firmware and settings
+are the same either way (default gain 51).
+
+| | With the antenna | Without the antenna |
+|---|---|---|
+| Sensitivity | Like an RX5808 | 30-40 dB lower |
+| Range at 25 mW (bench) | Like an RX5808 | Responds within about 1-2 m |
+| RSSI pin, quad at about 1-2 m (25 mW) | 1.06-1.19 V | about 0.56 V |
+| RSSI pin, quad at about 5 cm (25 mW) | 1.19 V (receiver clips) | about 0.80-0.85 V |
+| RSSI pin, no signal | about 0.4 V | about 0.37 V |
+
+- **With the antenna** the pin follows an RX5808 (10.1). An RX5808 at race
+  power saturates metres before the gate (about 1.08 V); the receiver
+  resolves about 4 dB further.
+- **Without the antenna** a quad registers only near the gate and the RSSI
+  is still rising as it passes, so the maximum marks the pass rather than
+  the start of a plateau, and distant quads stay at the floor. Hosts must
+  calibrate lower thresholds (smaller swing; larger at higher VTX power)
+  and the gate must bring quads within about 1-2 m of the receiver at
+  25 mW.
+
+Values are bench measurements with one VTX; distances depend on VTX power,
+orientation and gate geometry.
 
 ---
 
@@ -624,6 +661,8 @@ Use `snap_us` and the sequence number only to detect lost polls.
 | 0.9.4 | 2026-10-18 | From the first firmware (Phase C2): blocks are at most 64 bytes (one SPI transfer without DMA), so PEAKS is repacked to 10 + 6n + 2 bytes (60 for 8 slots): valid and clipped flags move into header masks, the per-slot reading count is dropped. The readout frame must be the frame right after its request; a retry re-arms the same snapshot with READ_SELECT = 0x80 + n (no longer "repeated readouts return the same bytes"). All-ones frames are ignored. |
 | 0.9.5 | 2026-10-18 | Measured on the C2 firmware, these are no longer targets: 4 MHz bus clock for writes and fast readout, power-on to bus 51 ms, tune to valid RSSI ~0.35 ms, RX5808 <-> multi-channel switch under 1 ms, ~1,050 readings/s per slot with 8 slots (worst gap ~1.1 ms); RX5808 mode ~4,900 readings/s added. |
 | 0.9.6 | 2026-10-18 | Device renamed from RX5808-C5 to RX58_ESP32C5; no interface change (the identify word stays 0xC5009). Credits updated. |
+| 0.9.7 | 2026-10-18 | RSSI pin measured and matched to real RX5808 modules (10.1): ~0.4 V no signal, ~15 mV/dB, ~1.08 V at RX5808 saturation, ~1.19 V at the receiver's clip; full scale 1.32 V (filter R1 now 1.5 kΩ); source impedance ~1.6 kΩ. Antenna required (2.2). Default gain 51 (was 60). Digital RSSI (10.2) is now gain-compensated as already specified, referred to the input at gain index 60. |
+| 0.9.8 | 2026-10-18 | Antenna and lap timing (10.3): the antenna is optional; without it the receiver responds within about 1-2 m at 25 mW, which lap timers may prefer. No interface change. |
 
 ---
 

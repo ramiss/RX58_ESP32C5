@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="470" viewBox="0 0 820 470" font-family='system-ui, -apple-system, "Segoe UI", sans-serif' role="img" aria-labelledby="t d">
+<title id="t">RSSI pin voltage: RX58_ESP32C5 against two real RX5808 modules</title>
+<desc id="d">Medians per 2 dB. The C5 follows the RX5808 curve from the noise floor up, then keeps rising about 8 dB past the point where both RX5808 modules saturate near 1.08 V.</desc>
+<rect width="820" height="470" rx="8" fill="#1a1a19"/>
+<text x="64" y="30" font-size="16" font-weight="600" fill="#f0efec">RSSI pin voltage vs signal level</text>
+<text x="64" y="50" font-size="12.5" fill="#c3c2b7">Receivers side by side, one VTX at 25 mW moved from far to 5 cm; medians per 2 dB</text>
+<rect x="558.2" y="70" width="41.2" height="342" fill="#f0efec" fill-opacity="0.06"/>
+<text x="578.8" y="386" font-size="12" text-anchor="middle" fill="#c3c2b7">C5 headroom</text>
+<text x="578.8" y="401" font-size="12" text-anchor="middle" fill="#c3c2b7">≈4 dB</text>
+<line x1="64" x2="620" y1="376.0" y2="376.0" stroke="#2c2c2a" stroke-width="1"/>
+<text x="56" y="380.0" font-size="12" text-anchor="end" fill="#898781" style="font-variant-numeric: tabular-nums">0.4</text>
+<line x1="64" x2="620" y1="304.0" y2="304.0" stroke="#2c2c2a" stroke-width="1"/>
+<text x="56" y="308.0" font-size="12" text-anchor="end" fill="#898781" style="font-variant-numeric: tabular-nums">0.6</text>
+<line x1="64" x2="620" y1="232.0" y2="232.0" stroke="#2c2c2a" stroke-width="1"/>
+<text x="56" y="236.0" font-size="12" text-anchor="end" fill="#898781" style="font-variant-numeric: tabular-nums">0.8</text>
+<line x1="64" x2="620" y1="160.0" y2="160.0" stroke="#2c2c2a" stroke-width="1"/>
+<text x="56" y="164.0" font-size="12" text-anchor="end" fill="#898781" style="font-variant-numeric: tabular-nums">1.0</text>
+<line x1="64" x2="620" y1="88.0" y2="88.0" stroke="#2c2c2a" stroke-width="1"/>
+<text x="56" y="92.0" font-size="12" text-anchor="end" fill="#898781" style="font-variant-numeric: tabular-nums">1.2</text>
+<text transform="translate(18 241) rotate(-90)" font-size="12" text-anchor="middle" fill="#c3c2b7">RSSI pin (V)</text>
+<line x1="64" x2="620" y1="412" y2="412" stroke="#383835" stroke-width="1"/>
+<text x="64.0" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">0</text>
+<text x="167.0" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">10</text>
+<text x="269.9" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">20</text>
+<text x="372.9" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">30</text>
+<text x="475.9" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">40</text>
+<text x="578.8" y="430" font-size="12" text-anchor="middle" fill="#898781" style="font-variant-numeric: tabular-nums">50</text>
+<text x="342" y="456" font-size="12" text-anchor="middle" fill="#c3c2b7">Signal level (dB above the C5 noise floor)</text>
+<line x1="64" x2="620" y1="130.0" y2="130.0" stroke="#898781" stroke-width="1" stroke-opacity="0.7"/>
+<text x="70" y="124.0" font-size="11.5" fill="#898781">RX5808 saturation ≈1.08 V</text>
+<path d="M64.0,376.2 L84.6,374.1 L105.2,353.7 L125.8,345.6 L146.4,334.5 L167.0,321.6 L187.6,308.7 L208.1,297.0 L228.7,289.1 L249.3,281.8 L269.9,268.4 L290.5,253.9 L311.1,246.2 L331.7,236.3 L352.3,224.4 L372.9,212.9 L393.5,203.1 L414.1,200.8 L434.7,184.6 L455.3,169.9 L475.9,158.3 L496.4,151.6 L517.0,140.5 L537.6,131.3 L558.2,119.2 L578.8,108.7 L599.4,90.7" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="599.4" cy="90.7" r="4" fill="#3987e5" stroke="#1a1a19" stroke-width="2"/>
+<path d="M64.0,377.5 L84.6,365.7 L105.2,350.9 L125.8,350.7 L146.4,342.4 L167.0,319.3 L187.6,311.1 L208.1,308.3 L228.7,304.4 L249.3,272.6 L269.9,242.9 L290.5,242.3 L311.1,233.7 L331.7,233.5 L352.3,238.3 L372.9,216.9 L393.5,213.3 L414.1,183.4 L434.7,175.9 L455.3,166.7 L475.9,157.5 L496.4,134.2 L517.0,146.0 L537.6,135.3 L558.2,131.1 L578.8,130.8 L599.4,130.6" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="599.4" cy="130.6" r="4" fill="#d95926" stroke="#1a1a19" stroke-width="2"/>
+<path d="M64.0,395.6 L84.6,395.6 L105.2,392.1 L125.8,392.1 L146.4,385.2 L167.0,378.3 L187.6,381.8 L208.1,367.9 L228.7,357.6 L249.3,333.4 L269.9,305.7 L290.5,309.2 L311.1,295.4 L331.7,298.8 L352.3,300.5 L372.9,283.3 L393.5,278.1 L414.1,259.1 L455.3,217.6 L475.9,226.2 L496.4,177.9 L517.0,150.2 L537.6,146.8 L558.2,132.9 L578.8,145.0 L599.4,129.5" fill="none" stroke="#199e70" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="599.4" cy="129.5" r="4" fill="#199e70" stroke="#1a1a19" stroke-width="2"/>
+<line x1="626.0" y1="90.7" x2="631.0" y2="90.7" stroke="#898781" stroke-width="1"/>
+<circle cx="638" cy="90.7" r="4" fill="#3987e5"/>
+<text x="647" y="94.7" font-size="12" fill="#f0efec">RX58_ESP32C5 (this firmware)</text>
+<line x1="626.0" y1="129.5" x2="631.0" y2="129.5" stroke="#898781" stroke-width="1"/>
+<circle cx="638" cy="129.5" r="4" fill="#199e70"/>
+<text x="647" y="133.5" font-size="12" fill="#f0efec">RX5808, module B</text>
+<line x1="626.0" y1="130.6" x2="631.0" y2="144.5" stroke="#898781" stroke-width="1"/>
+<circle cx="638" cy="144.5" r="4" fill="#d95926"/>
+<text x="647" y="148.5" font-size="12" fill="#f0efec">RX5808, module A</text>
+<line x1="64" x2="80" y1="66" y2="66" stroke="#3987e5" stroke-width="2" stroke-linecap="round"/>
+<text x="86" y="70" font-size="12" fill="#c3c2b7">RX58_ESP32C5 (this firmware)</text>
+<line x1="290" x2="306" y1="66" y2="66" stroke="#d95926" stroke-width="2" stroke-linecap="round"/>
+<text x="312" y="70" font-size="12" fill="#c3c2b7">RX5808, module A</text>
+<line x1="432" x2="448" y1="66" y2="66" stroke="#199e70" stroke-width="2" stroke-linecap="round"/>
+<text x="454" y="70" font-size="12" fill="#c3c2b7">RX5808, module B</text>
+</svg>
