@@ -27,3 +27,5 @@ phase_a
 !/tools/pio_targets.py
 !/tools/publish_release.py
 !/tools/make_wiki.py
+# Generated wiki pages (CI publishes them: .github/workflows/wiki.yml)
+/docs/wiki/

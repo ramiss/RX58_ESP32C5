@@ -1,0 +1,66 @@
+name: Wiki
+
+# Keeps the GitHub wiki in step with the repo: on every push to main that
+# touches the docs, tools/make_wiki.py turns README.md, the datasheet and the
+# development log into wiki pages, and this job replaces the wiki's contents
+# with them.  The repo is the source; edits made in the wiki are overwritten.
+#
+# One-time setup (the wiki's git repo only exists after it):
+#   Settings > General > Features > tick "Wikis", then open the Wiki tab and
+#   save any first page.  Then run this workflow (Actions > Wiki > Run).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - 'docs/**'
+      - tools/make_wiki.py
+      - .github/workflows/wiki.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write   # the wiki is pushed with the job's own token
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate pages
+        run: python tools/make_wiki.py --out "$RUNNER_TEMP/pages"
+
+      - name: Publish to the wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          WIKI="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          if ! git clone --depth 1 "$WIKI" wiki; then
+            echo "::error::No wiki repo yet. Enable Wikis (Settings > Features), save any first page, then re-run this workflow."
+            exit 1
+          fi
+          # Mirror exactly: pages no longer generated are removed.
+          find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp "$RUNNER_TEMP"/pages/*.md wiki/
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already up to date"
+            exit 0
+          fi
+          git commit -m "Update wiki from ${GITHUB_SHA::7}"
+          git push

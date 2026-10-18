@@ -3,16 +3,17 @@
 The repo is the source: README.md, the datasheet and the development log.
 This splits the README into pages, copies the datasheet and the log, and
 rewrites links for the wiki (pages by name, repo files as GitHub URLs,
-images as raw URLs).  Output: docs/wiki/.
+images as raw URLs).
 
-  python tools/make_wiki.py
+  python tools/make_wiki.py [--out DIR]     (default DIR: docs/wiki, git-ignored)
 
-Publish: the wiki is its own git repo.  Enable the wiki on GitHub, create
-any first page there, then:
-  git clone https://github.com/ramiss/RX58_ESP32C5.wiki.git
-  copy docs/wiki/*.md into it, commit, push.
+Published automatically: .github/workflows/wiki.yml runs this on every push
+to main that touches the docs and pushes the pages to the GitHub wiki (its
+own git repo).  One-time setup: enable Wikis (Settings > Features) and create
+any first page; the workflow then replaces the wiki's contents.
 """
 
+import argparse
 import re
 from pathlib import Path
 
@@ -100,6 +101,10 @@ def rewrite(md, src_dir, amap):
 
 
 def main():
+    global OUT
+    ap = argparse.ArgumentParser(description="Generate the GitHub wiki pages from the repo docs.")
+    ap.add_argument("--out", type=Path, default=OUT, help="output folder (default: docs/wiki)")
+    OUT = ap.parse_args().out
     OUT.mkdir(parents=True, exist_ok=True)
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     sections = split_sections(readme)
@@ -114,6 +119,8 @@ def main():
         md = rewrite("\n\n".join(parts), "", amap)
         if page == "Home":
             md = re.sub(r"^# .+\n", "", md)                 # the wiki titles Home itself
+            # The README's pointer to the wiki would link the wiki to itself.
+            md = re.sub(r"\s*The same\s+documentation is also on the \[wiki\]\([^)]*\)\.", "", md)
             # Added after rewrite(): these are already wiki page links.
             md += ("\n\n## Pages\n\n" + "\n".join(
                 f"- [{TITLES.get(p, p.replace('-', ' '))}]({p})" for p, _ in PAGES[1:])
