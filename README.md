@@ -1,9 +1,9 @@
-# RX58_ESP32C5: an RX5808 replacement on a XIAO ESP32-C5
+# RX58_ESP32C5: an enhanced RX5808 replacement on a XIAO ESP32-C5
 
 Firmware that turns a **Seeed Studio XIAO ESP32-C5** into a drop-in
 replacement for the **RX5808** 5.8 GHz FPV receiver module, plus a
 **multi-channel mode** that measures up to **8 channels at once** (about
-1,000 readings per second each) from one receiver.
+1,000 readings per second each) from one receiver - for lap timing or as a spectrum analyzer.
 
 - **Legacy hosts need no changes.** The C5 speaks the RX5808's 3-wire bus
   and drives an analog RSSI pin; an unmodified FPVRaceOne tunes it and times
