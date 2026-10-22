@@ -11,7 +11,7 @@
 #include "esp_err.h"
 #include "regs.h"
 
-#define RX_FW_VERSION      0x0001     // 0.1 (INFO bytes 4-5)
+#define RX_FW_VERSION      0x0009     // 0.9 (INFO bytes 4-5)
 // Forced RX gain index.  With the antenna fitted, 51 keeps the receiver's
 // sensitivity (within 1 dB of 60: its noise floor falls with the gain down to
 // ~51) and leaves ~9 dB of headroom above where a real RX5808 saturates

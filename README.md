@@ -18,7 +18,7 @@ The host interface is specified in the
 covers the hardware, flashing, and how to integrate a host. The same
 documentation is also on the [wiki](https://github.com/ramiss/RX58_ESP32C5/wiki).
 
-> **Status: pre-release (firmware 0.1, interface v0.9.8).** RX5808 mode,
+> **Status: pre-release (firmware 0.9, interface v0.9.8).** RX5808 mode,
 > multi-channel mode and the bus extension are implemented and bench-tested
 > (see [What's verified](#whats-verified)), and the RSSI pin is matched to
 > real RX5808 modules ([RSSI curve](#rssi-curve)). Composite video is
